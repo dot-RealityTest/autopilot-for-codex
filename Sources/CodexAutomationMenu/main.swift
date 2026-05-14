@@ -34,9 +34,225 @@ struct AutomationItem: Identifiable {
 
     var keyPoint: String {
         if let blocker { return blocker }
-        if needsApproval { return "Ask before writes or service changes." }
+        if needsApproval { return "Needs your OK before changing files or services." }
         if let lastNote { return lastNote }
         return "No recent note."
+    }
+
+    var overviewLines: [String] {
+        switch health {
+        case .blocked:
+            return ["Needs attention.", "The next run is waiting on access or a clear review."]
+        case .approval:
+            return ["Ready for human review.", "Changes are prepared but not applied."]
+        case .active:
+            return ["Running quietly.", "No guidance needed right now."]
+        case .paused:
+            return ["Paused.", "This automation is not running."]
+        }
+    }
+
+    var recentActions: [String] {
+        let cleaned = keyChanges.map(Self.operationalText)
+        if !cleaned.isEmpty { return Array(cleaned.prefix(3)) }
+
+        switch health {
+        case .blocked:
+            return ["Detected an access issue"]
+        case .approval:
+            return ["Prepared changes for review"]
+        case .active:
+            return ["Checked latest automation state"]
+        case .paused:
+            return ["No recent activity"]
+        }
+    }
+
+    var permissionItems: [String] {
+        let lowercasedName = name.lowercased()
+        if lowercasedName.contains("obsidian") {
+            return ["write project notes", "update daily note sections"]
+        }
+        if lowercasedName.contains("skill") || lowercasedName.contains("hygiene") {
+            return ["modify local files", "update installed skill folders"]
+        }
+        if lowercasedName.contains("stack") || lowercasedName.contains("ai") || lowercasedName.contains("ollama") {
+            return ["inspect local services", "clean unused local state"]
+        }
+        if health == .active {
+            return ["no extra permission needed"]
+        }
+        return ["review proposed changes", "continue the automation"]
+    }
+
+    var confidenceText: String {
+        switch health {
+        case .blocked:
+            return "Needs review"
+        case .approval:
+            return "Safe to review"
+        case .active:
+            return "High"
+        case .paused:
+            return "Paused"
+        }
+    }
+
+    var safetyText: String {
+        switch health {
+        case .blocked:
+            return "apply only after access is cleared"
+        case .approval:
+            return "no changes applied"
+        case .active:
+            return "no destructive action detected"
+        case .paused:
+            return "no action running"
+        }
+    }
+
+    var affectedItems: [String] {
+        let lowercasedName = name.lowercased()
+        if lowercasedName.contains("obsidian") {
+            return ["Obsidian project notes", "Daily note status"]
+        }
+        if lowercasedName.contains("skill") || lowercasedName.contains("hygiene") {
+            return ["Codex skills", "Installed skill folders"]
+        }
+        if lowercasedName.contains("stack") || lowercasedName.contains("ai") || lowercasedName.contains("ollama") {
+            return ["Local AI services", "Model cache"]
+        }
+        return ["Configured workspace", "Automation memory"]
+    }
+
+    var proposedChanges: [DiffLine] {
+        let source = keyChanges.isEmpty ? nextChanges : keyChanges
+        let rows = source.map { DiffLine.make(from: $0) }
+        if !rows.isEmpty { return Array(rows.prefix(4)) }
+
+        switch health {
+        case .blocked:
+            return [DiffLine(kind: .warning, text: "clear permission issue")]
+        case .approval:
+            return [DiffLine(kind: .addition, text: "continue after approval")]
+        case .active:
+            return [DiffLine(kind: .neutral, text: "no proposed change")]
+        case .paused:
+            return [DiffLine(kind: .neutral, text: "paused")]
+        }
+    }
+
+    private static func operationalText(_ text: String) -> String {
+        let lowercased = text.lowercased()
+        if lowercased.contains("wrapper-style skills") || lowercased.contains("user-created") {
+            return "Marked wrapper skills as user-created"
+        }
+        if lowercased.contains("lowercase skill") || lowercased.contains("filenames") {
+            return "Fixed lowercase filenames"
+        }
+        if lowercased.contains("verified") || lowercased.contains("cleanup") {
+            return "Verified cleanup"
+        }
+        if lowercased.contains("v8v") || lowercased.contains("bundle") || lowercased.contains("catalog") {
+            return "Verified bundle source"
+        }
+        if lowercased.contains("project notes") && lowercased.contains("missing") {
+            return "Found missing project notes"
+        }
+        if lowercased.contains("project progress block") {
+            return "Checked progress block"
+        }
+        if lowercased.contains("ollama") || lowercased.contains("model") {
+            return "Checked local AI stack"
+        }
+        if lowercased.contains("out of sync") {
+            return "Found skills out of sync"
+        }
+        if lowercased.contains("removed") || lowercased.contains("non-keep") {
+            return "Removed unused models"
+        }
+
+        var result = text
+            .replacingOccurrences(of: "Clarified:", with: "Clarified")
+            .replacingOccurrences(of: "Confirmed the", with: "Confirmed")
+            .replacingOccurrences(of: "Fixed the", with: "Fixed")
+            .replacingOccurrences(of: "Marked the", with: "Marked")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if result.hasSuffix(".") {
+            result.removeLast()
+        }
+
+        return result.count > 44 ? String(result.prefix(41)) + "..." : result
+    }
+}
+
+struct DiffLine: Identifiable {
+    enum Kind {
+        case addition
+        case rename
+        case deletion
+        case warning
+        case neutral
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let text: String
+
+    static func make(from text: String) -> DiffLine {
+        let lowercased = text.lowercased()
+        if lowercased.contains("duplicated filler") || lowercased.contains("filler blocks") {
+            return DiffLine(kind: .deletion, text: "Removed duplicated filler blocks")
+        }
+        if lowercased.contains("wrapper-style skills") || lowercased.contains("user-created") {
+            return DiffLine(kind: .addition, text: "Marked wrapper skills as user-created")
+        }
+        if lowercased.contains("lowercase skill") || lowercased.contains("filenames") {
+            return DiffLine(kind: .rename, text: "Fixed lowercase filenames")
+        }
+        if lowercased.contains("verified") || lowercased.contains("cleanup") {
+            return DiffLine(kind: .addition, text: "Verified cleanup")
+        }
+        if lowercased.contains("94 skill") || lowercased.contains("validated") {
+            return DiffLine(kind: .warning, text: "Validated skill folders")
+        }
+        if lowercased.contains("synced") || lowercased.contains("out of sync") {
+            return DiffLine(kind: .addition, text: "Synced installed skills")
+        }
+        if lowercased.contains("non-keep") || lowercased.contains("unused model") || lowercased.contains("removed") {
+            return DiffLine(kind: .deletion, text: "Removed unused models")
+        }
+        if lowercased.contains("ollama") || lowercased.contains("model") {
+            return DiffLine(kind: .addition, text: "Checked local AI stack")
+        }
+        if lowercased.contains("project notes") && lowercased.contains("missing") {
+            return DiffLine(kind: .warning, text: "Found missing project notes")
+        }
+        if lowercased.contains("project progress block") {
+            return DiffLine(kind: .warning, text: "Checked progress block")
+        }
+        if lowercased.contains("bundle") || lowercased.contains("catalog") || lowercased.contains("v8v") {
+            return DiffLine(kind: .addition, text: "Verified bundle source")
+        }
+        if lowercased.contains("delete") || lowercased.contains("removed") {
+            return DiffLine(kind: .deletion, text: compact(text))
+        }
+        if lowercased.contains("rename") || lowercased.contains("lowercase skill") {
+            return DiffLine(kind: .rename, text: compact(text))
+        }
+        if lowercased.contains("permission") || lowercased.contains("missing") || lowercased.contains("blocked") {
+            return DiffLine(kind: .warning, text: compact(text))
+        }
+        return DiffLine(kind: .addition, text: compact(text))
+    }
+
+    private static func compact(_ text: String) -> String {
+        var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.hasSuffix(".") {
+            result.removeLast()
+        }
+        return result.count > 48 ? String(result.prefix(45)) + "..." : result
     }
 }
 
@@ -71,7 +287,7 @@ final class AutomationModel: ObservableObject {
     var headline: String {
         switch overallHealth {
         case .blocked:
-            return "\(blockedCount) blocked"
+            return "\(blockedCount) need attention"
         case .approval:
             return "\(approvalCount) need OK"
         case .active:
@@ -79,6 +295,10 @@ final class AutomationModel: ObservableObject {
         case .paused:
             return "No active automations"
         }
+    }
+
+    var needsAttentionItems: [AutomationItem] {
+        items.filter { $0.health == .blocked || $0.health == .approval }
     }
 
     func refresh() {
@@ -182,10 +402,10 @@ final class AutomationModel: ObservableObject {
     private static func blockerHint(from memoryTail: String) -> String? {
         let text = memoryTail.lowercased()
         if text.contains("permissionerror") {
-            return "Permission blocked."
+            return "Permission needed."
         }
         if text.contains("failed with") || text.contains("failed immediately") {
-            return "Last run failed."
+            return "Needs review before the next run."
         }
         return nil
     }
@@ -227,7 +447,7 @@ final class AutomationModel: ObservableObject {
                 return text
             }
 
-        let latest = Array(bullets.suffix(3))
+        let latest = Array(NSOrderedSet(array: bullets.suffix(3)).compactMap { $0 as? String })
         if !latest.isEmpty { return latest }
 
         return lastUsefulNote(from: block).map { [$0] } ?? []
@@ -286,7 +506,7 @@ final class AutomationModel: ObservableObject {
     }
 
     private static func clean(_ text: String) -> String {
-        let stripped = text
+        let normalized = text
             .replacingOccurrences(of: "`", with: "")
             .replacingOccurrences(
                 of: #"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+[A-Z]+:\s*"#,
@@ -301,8 +521,59 @@ final class AutomationModel: ObservableObject {
             .replacingOccurrences(of: "User ", with: "You ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if stripped.count <= 220 { return stripped }
-        return String(stripped.prefix(217)) + "..."
+        let strippedPaths = normalized
+            .replacingOccurrences(
+                of: #"/Users/[^\s,.;:)]+(?:/[^\s,.;:)]+)*"#,
+                with: "local files",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"~/?\.codex/[^\s,.;:)]+(?:/[^\s,.;:)]+)*"#,
+                with: "Codex files",
+                options: .regularExpression
+            )
+
+        let summarized = friendlySummary(for: strippedPaths)
+        if summarized.count <= 145 { return summarized }
+        return String(summarized.prefix(142)) + "..."
+    }
+
+    private static func friendlySummary(for text: String) -> String {
+        let lowercased = text.lowercased()
+
+        if lowercased.contains("lowercase skill") || lowercased.contains("renamed 8 files") {
+            return "Fixed the lowercase skill filenames and verified the cleanup."
+        }
+
+        if lowercased.contains("user-created") || lowercased.contains("wrapper-style skills") {
+            return "Marked the wrapper-style skills as user-created so future checks leave them alone."
+        }
+
+        if lowercased.contains("bundle source") || lowercased.contains("catalog") || lowercased.contains("v8v") {
+            return "Confirmed the V8V folder is a real bundle/catalog source, not cleanup noise."
+        }
+
+        if lowercased.contains("per-project notes") && lowercased.contains("missing") {
+            return "Project notes are still missing and need vault write access before this can complete."
+        }
+
+        if lowercased.contains("project progress block") && lowercased.contains("no") {
+            return "The daily note exists, but the Project Progress block is still missing."
+        }
+
+        if lowercased.contains("permissionerror") || lowercased.contains("operation not permitted") {
+            return "Write access is needed before running this automation again."
+        }
+
+        if lowercased.contains("ollama") && lowercased.contains("model") {
+            return "Checked the local AI stack and found model/service details worth reviewing."
+        }
+
+        if lowercased.contains("out of sync") {
+            return "Found installed skills that are out of sync with the improved pack."
+        }
+
+        return text
     }
 
     private static func tail(_ text: String, characterLimit: Int) -> String {
@@ -365,158 +636,154 @@ final class AutomationModel: ObservableObject {
 
 struct FastReportView: View {
     @ObservedObject var model: AutomationModel
-    let onRefresh: () -> Void
-    let onOpenCodex: () -> Void
     let onOpenReportWindow: () -> Void
-    let onOpenFolder: () -> Void
-    let onQuit: () -> Void
+    let onReviewAutomation: (AutomationItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: 10) {
             header
-            actionBar
 
-            HStack(spacing: 8) {
-                StatPill(title: "Active", value: "\(model.activeCount)", tint: .green)
-                StatPill(title: "Need OK", value: "\(model.approvalCount)", tint: .orange)
-                StatPill(title: "Blocked", value: "\(model.blockedCount)", tint: .red)
-            }
-
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 3) {
                 ForEach(model.items.prefix(4)) { item in
-                    FastStatusRow(item: item)
+                    FastStatusRow(
+                        item: item,
+                        onOpen: onOpenReportWindow,
+                        onReview: onOpenReportWindow
+                    )
                 }
             }
-
-            footer
         }
-        .padding(14)
-        .frame(width: 334, height: 286)
+        .padding(.top, 16)
+        .padding(.horizontal, 18)
+        .padding(.bottom, 14)
+        .frame(width: 340, height: fastPopoverHeight(for: model.items))
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(color(for: model.overallHealth).opacity(0.13))
-                    .frame(width: 32, height: 32)
-                Image(systemName: "gearshape.2.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(color(for: model.overallHealth))
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Codex Automations")
-                    .font(.system(size: 14, weight: .semibold))
-                Text(model.headline)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Button(action: onRefresh) {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 13, weight: .medium))
-            .help("Refresh")
-        }
-    }
-
-    private var actionBar: some View {
-        VStack(spacing: 8) {
-            Button(action: onOpenCodex) {
-                Label("Open Codex", systemImage: "arrow.up.forward.app")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-            .padding(.vertical, 7)
-            .padding(.horizontal, 10)
-            .background(Color.accentColor.opacity(0.12))
-            .foregroundStyle(Color.accentColor)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            HStack(spacing: 8) {
-                Button(action: onOpenReportWindow) {
-                    Label("Full Report", systemImage: "rectangle.split.2x1")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .padding(.vertical, 7)
-                .padding(.horizontal, 10)
-                .background(Color(nsColor: .separatorColor).opacity(0.13))
-                .foregroundStyle(.primary)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                Button(action: onOpenFolder) {
-                    Label("Folder", systemImage: "folder")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .padding(.vertical, 7)
-                .padding(.horizontal, 10)
-                .background(Color(nsColor: .separatorColor).opacity(0.13))
-                .foregroundStyle(.secondary)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 10) {
-            Text(updatedText)
-                .font(.system(size: 10))
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Codex Automations")
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+            Text("\(model.activeCount) active · \(updatedText.lowercased())")
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-
-            Spacer()
-
-            Button(action: onQuit) {
-                Image(systemName: "power")
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 13, weight: .medium))
-            .help("Quit")
         }
     }
 
     private var updatedText: String {
-        guard let date = model.lastUpdated else { return "Not refreshed yet" }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return "Updated \(formatter.string(from: date))"
+        relativeUpdatedText(model.lastUpdated)
     }
+}
+
+func fastPopoverHeight(for items: [AutomationItem]) -> CGFloat {
+    let visibleRows = CGFloat(min(max(items.count, 1), 4))
+    return 76 + visibleRows * 40
 }
 
 struct FastStatusRow: View {
     let item: AutomationItem
+    let onOpen: () -> Void
+    let onReview: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 8) {
+            Button(action: onOpen) {
+                HStack(spacing: 8) {
+                    StatusDot(health: item.health, size: 6)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.name)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(statusLabel(for: item.health))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if hovering && item.needsApproval {
+                Button(action: onReview) {
+                    Text("Review")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(color(for: item.health))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text(shortStatus(for: item.health))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(color(for: item.health))
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(hovering ? Color.primary.opacity(0.045) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onHover { hovering = $0 }
+    }
+}
+
+struct StatusDot: View {
+    let health: AutomationHealth
+    let size: CGFloat
+    @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            if health == .active && !reduceMotion {
+                Circle()
+                    .fill(color(for: health).opacity(pulse ? 0.12 : 0.28))
+                    .frame(width: size * 2.4, height: size * 2.4)
+                    .scaleEffect(pulse ? 1.12 : 0.72)
+            }
+
             Circle()
-                .fill(color(for: item.health))
-                .frame(width: 6, height: 6)
+                .fill(color(for: health))
+                .frame(width: size, height: size)
+        }
+        .frame(width: max(size * 2.4, size), height: max(size * 2.4, size))
+        .onAppear {
+            guard health == .active, !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
+}
 
-            Text(item.name)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
+struct HeartbeatDot: View {
+    let health: AutomationHealth
+    let size: CGFloat
+    @State private var glow = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-            Spacer()
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(color(for: health).opacity(glow ? 0.12 : 0.28), lineWidth: 1)
+                .frame(width: size * 3.1, height: size * 3.1)
+                .scaleEffect(glow ? 1.12 : 0.84)
+                .opacity(health == .paused ? 0 : 1)
 
-            Text(statusLabel(for: item.health))
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(color(for: item.health))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(color(for: item.health).opacity(0.11))
-                .clipShape(Capsule())
+            Circle()
+                .fill(color(for: health))
+                .frame(width: size, height: size)
+        }
+        .frame(width: size * 3.1, height: size * 3.1)
+        .onAppear {
+            guard !reduceMotion, health != .paused else { return }
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
+                glow = true
+            }
         }
     }
 }
@@ -525,7 +792,6 @@ struct ReportWindowView: View {
     @ObservedObject var model: AutomationModel
     let onRefresh: () -> Void
     let onReviewAutomation: (AutomationItem) -> Void
-    let onOpenFolder: () -> Void
     @State private var selectedAutomationID: String?
 
     private var selectedItem: AutomationItem? {
@@ -540,26 +806,26 @@ struct ReportWindowView: View {
         HSplitView {
             ReportSidebarView(
                 model: model,
-                selectedAutomationID: $selectedAutomationID
+                selectedAutomationID: $selectedAutomationID,
+                onReviewAutomation: onReviewAutomation,
+                onRefresh: onRefresh
             )
-            .frame(minWidth: 180, idealWidth: 230, maxWidth: 340)
+            .frame(minWidth: 170, idealWidth: 230, maxWidth: 320)
 
             ReportDocumentView(
                 model: model,
                 selectedItem: selectedItem
             )
-            .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(1)
 
             ReportContentsView(
                 model: model,
-                selectedItem: selectedItem,
-                onRefresh: onRefresh,
-                onReviewAutomation: onReviewAutomation,
-                onOpenFolder: onOpenFolder
+                selectedItem: selectedItem
             )
-            .frame(minWidth: 230, idealWidth: 270, maxWidth: 380)
+            .frame(minWidth: 220, idealWidth: 270, maxWidth: 360)
         }
-        .frame(minWidth: 920, minHeight: 620)
+        .frame(minWidth: 820, minHeight: 560)
         .onAppear {
             if selectedAutomationID == nil {
                 selectedAutomationID = model.items.first?.id
@@ -582,59 +848,121 @@ struct ReportWindowView: View {
 struct ReportSidebarView: View {
     @ObservedObject var model: AutomationModel
     @Binding var selectedAutomationID: String?
+    let onReviewAutomation: (AutomationItem) -> Void
+    let onRefresh: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("RECENT")
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Recent")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .tracking(1.6)
-                .padding(.top, 22)
-                .padding(.horizontal, 16)
+                .padding(.top, 24)
+                .padding(.horizontal, 18)
 
             ScrollView {
-                LazyVStack(spacing: 5) {
+                LazyVStack(spacing: 9) {
                     ForEach(model.items) { item in
-                        Button {
-                            selectedAutomationID = item.id
-                        } label: {
-                            HStack(spacing: 9) {
-                                Image(systemName: "doc.text")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(color(for: item.health))
-                                    .frame(width: 16)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.name)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                    Text(statusLabel(for: item.health))
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-
-                                Spacer(minLength: 0)
+                        SidebarAutomationRow(
+                            item: item,
+                            isSelected: selectedAutomationID == item.id,
+                            onSelect: {
+                                selectedAutomationID = item.id
+                            },
+                            onReview: {
+                                selectedAutomationID = item.id
+                            },
+                            onOpenCodex: {
+                                onReviewAutomation(item)
+                            },
+                            onOpenFolder: {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: item.workingPath ?? item.automationPath))
+                            },
+                            onRefresh: onRefresh,
+                            onCopySummary: {
+                                copySummary(for: item)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(
-                                selectedAutomationID == item.id
-                                ? Color.accentColor.opacity(0.16)
-                                : Color.clear
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
+                        )
                     }
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 12)
             }
 
             Spacer(minLength: 0)
         }
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func copySummary(for item: AutomationItem) {
+        let summary = """
+        \(item.name)
+        \(statusLabel(for: item.health)) · \(item.confidenceText)
+        \(item.proposedChanges.map(\.text).joined(separator: "\n"))
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+    }
+}
+
+struct SidebarAutomationRow: View {
+    let item: AutomationItem
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onReview: () -> Void
+    let onOpenCodex: () -> Void
+    let onOpenFolder: () -> Void
+    let onRefresh: () -> Void
+    let onCopySummary: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                StatusDot(health: item.health, size: 7)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary.opacity(0.9))
+                        .lineLimit(1)
+                    Text(statusLabel(for: item.health))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary.opacity(0.68))
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                if hovering && item.needsApproval {
+                    Button(action: onReview) {
+                        Text("Review")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(color(for: item.health))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(isSelected ? Color.accentColor.opacity(0.028) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.035), lineWidth: 1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Review Changes", action: onReview)
+            Button("Open in Codex", action: onOpenCodex)
+            Button("Open Folder", action: onOpenFolder)
+            Divider()
+            Button("Refresh", action: onRefresh)
+            Button("Copy Summary", action: onCopySummary)
+        }
     }
 }
 
@@ -643,212 +971,255 @@ struct ReportDocumentView: View {
     let selectedItem: AutomationItem?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let item = selectedItem {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Circle()
-                                .fill(color(for: item.health))
-                                .frame(width: 8, height: 8)
-                            Text(item.name)
-                                .font(.system(size: 22, weight: .semibold))
-                                .lineLimit(2)
-                            Spacer()
-                            Text(statusLabel(for: item.health))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(color(for: item.health))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(color(for: item.health).opacity(0.12))
-                                .clipShape(Capsule())
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let item = selectedItem {
+                        VStack(alignment: .leading, spacing: 18) {
+                            LiveStateHeader(
+                                item: item
+                            )
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(item.overviewLines.enumerated()), id: \.offset) { index, line in
+                                    Text(line)
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(index == 0 ? .primary : .secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+
+                            OperationalGroup(title: "Proposed Changes", prominence: .primary) {
+                                ReviewDiffPreview(lines: item.proposedChanges)
+                            }
+
+                            if item.health == .approval || item.health == .blocked {
+                                ApprovalRequestBlock(item: item)
+                            }
+
+                            SafetyLine(item: item)
                         }
-
-                        UpdateHero(item: item)
-
-                        ReportDetailBlock(
-                            title: "What is happening now",
-                            icon: "arrow.right",
-                            tint: color(for: item.health),
-                            items: item.nextChanges
-                        )
-
-                        ReportDetailBlock(
-                            title: "What it accomplished",
-                            icon: "checkmark",
-                            tint: color(for: item.health),
-                            items: item.keyChanges
-                        )
+                    } else {
+                        EmptyStateView()
                     }
-                } else {
-                    EmptyStateView()
                 }
+                .frame(
+                    maxWidth: min(max(proxy.size.width - 56, 420), 860),
+                    alignment: .leading
+                )
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, proxy.size.width < 560 ? 20 : 28)
+                .padding(.vertical, proxy.size.width < 560 ? 22 : 28)
             }
-            .frame(maxWidth: 720, alignment: .leading)
-            .padding(.horizontal, 34)
-            .padding(.vertical, 28)
         }
         .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
-struct UpdateHero: View {
+struct LiveStateHeader: View {
     let item: AutomationItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Latest Update")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .tracking(1.1)
-                .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                HeartbeatDot(health: item.health, size: 8)
 
-            Text(item.keyPoint)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.primary)
-                .lineSpacing(3)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.name)
+                        .font(.system(size: 17, weight: .semibold))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
-            Text(updateSubtitle)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .lineSpacing(2)
+                    HStack(spacing: 6) {
+                        Text(liveLine)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(color(for: item.health))
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if item.health == .active {
+                LiveShimmerLine(tint: color(for: item.health))
+            }
         }
-        .padding(14)
-        .background(color(for: item.health).opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.vertical, 4)
     }
 
-    private var updateSubtitle: String {
+    private var liveLine: String {
         switch item.health {
-        case .blocked:
-            return "The automation reached a real blocker. The next useful move is to clear that blocker, then re-run or review the task."
-        case .approval:
-            return "The automation is waiting for a human check before it changes files, services, or other sensitive state."
-        case .active:
-            return "The automation is active and its latest local memory does not show a blocker."
-        case .paused:
-            return "The automation is paused or inactive."
+        case .active: return "Running"
+        case .approval: return "Needs review"
+        case .blocked: return "Needs attention"
+        case .paused: return "Paused"
         }
     }
 }
 
-struct InfoGrid: View {
-    let item: AutomationItem
+struct LiveShimmerLine: View {
+    let tint: Color
+    @State private var phase = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Run Context")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .tracking(1.1)
-                .textCase(.uppercase)
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(tint.opacity(0.09))
+                    .frame(height: 2)
 
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ], alignment: .leading, spacing: 10) {
-                InfoCell(title: "Schedule", value: item.schedule)
-                InfoCell(title: "Model", value: item.model)
-                InfoCell(title: "Reasoning", value: item.reasoning)
-                InfoCell(title: "Folders", value: "\(item.cwdCount)")
+                if !reduceMotion {
+                    Capsule()
+                        .fill(tint.opacity(0.36))
+                        .frame(width: max(proxy.size.width * 0.22, 70), height: 2)
+                        .offset(x: phase ? proxy.size.width : -proxy.size.width * 0.25)
+                }
+            }
+        }
+        .frame(height: 2)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
+                phase = true
             }
         }
     }
 }
 
-struct InfoCell: View {
+struct OperationalGroup<Content: View>: View {
+    enum Prominence {
+        case primary
+        case secondary
+    }
+
     let title: String
-    let value: String
+    let prominence: Prominence
+    let content: Content
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
-            Text(value)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    init(title: String, prominence: Prominence = .secondary, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.prominence = prominence
+        self.content = content()
     }
-}
-
-struct ReportPromptSummary: View {
-    let item: AutomationItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Automation Intent")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .tracking(1.1)
-                .textCase(.uppercase)
-
-            Text(intentText)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .lineLimit(4)
-                .lineSpacing(2)
-        }
-    }
-
-    private var intentText: String {
-        switch item.health {
-        case .blocked:
-            return "This automation is active, but the latest local memory reports a blocker that needs attention before the run can finish cleanly."
-        case .approval:
-            return "This automation has guardrails that require explicit review before writes, cleanup, service changes, or other sensitive actions."
-        case .active:
-            return "This automation is active and has no blocker detected in its latest local memory."
-        case .paused:
-            return "This automation is not currently active."
-        }
-    }
-}
-
-struct ReportDetailBlock: View {
-    let title: String
-    let icon: String
-    let tint: Color
-    let items: [String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+            if prominence == .primary {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.86))
+            } else {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .tracking(1.2)
-                    .textCase(.uppercase)
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(height: 1)
             }
 
-            if items.isEmpty {
-                Text("Nothing new.")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: icon)
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(tint)
-                                .frame(width: 14)
-                            Text(item)
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                                .lineSpacing(2)
-                        }
-                    }
+            content
+        }
+    }
+}
+
+struct OperationalBullet: View {
+    let symbol: String
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 15)
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .lineSpacing(2)
+        }
+    }
+}
+
+struct ApprovalRequestBlock: View {
+    let item: AutomationItem
+
+    var body: some View {
+        OperationalGroup(title: "Permissions Needed") {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(item.permissionItems, id: \.self) { permission in
+                    OperationalBullet(
+                        symbol: "circle",
+                        text: permission,
+                        tint: color(for: item.health)
+                    )
                 }
             }
+        }
+    }
+}
+
+struct ReviewDiffPreview: View {
+    let lines: [DiffLine]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ForEach(lines) { line in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(prefix(for: line.kind))
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(tint(for: line.kind))
+                        .frame(width: 18, alignment: .center)
+                        .fixedSize(horizontal: true, vertical: false)
+
+                    Text(line.text)
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.primary.opacity(0.84))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func prefix(for kind: DiffLine.Kind) -> String {
+        switch kind {
+        case .addition: return "+"
+        case .rename: return "→"
+        case .deletion: return "−"
+        case .warning: return "!"
+        case .neutral: return "·"
+        }
+    }
+
+    private func tint(for kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .addition: return Color(nsColor: .systemGreen)
+        case .rename: return Color(nsColor: .systemBlue)
+        case .deletion: return Color(nsColor: .systemRed)
+        case .warning: return Color(nsColor: .systemOrange)
+        case .neutral: return .secondary
+        }
+    }
+}
+
+struct SafetyLine: View {
+    let item: AutomationItem
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.shield")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(color(for: item.health))
+            Text(item.confidenceText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+            Text("·")
+                .foregroundStyle(.tertiary)
+            Text(item.safetyText)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 }
@@ -856,146 +1227,84 @@ struct ReportDetailBlock: View {
 struct ReportContentsView: View {
     @ObservedObject var model: AutomationModel
     let selectedItem: AutomationItem?
-    let onRefresh: () -> Void
-    let onReviewAutomation: (AutomationItem) -> Void
-    let onOpenFolder: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Inspector")
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.horizontal, 18)
-                .padding(.top, 22)
-                .padding(.bottom, 16)
-
-            Divider()
-
-            if let selectedItem {
-                VStack(alignment: .leading, spacing: 12) {
-                    InfoGrid(item: selectedItem)
-                }
-                .padding(18)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    ReportPromptSummary(item: selectedItem)
-                }
-                .padding(18)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Key Changes")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .tracking(1.2)
-                        .textCase(.uppercase)
-
-                    if selectedItem.keyChanges.isEmpty {
-                        Text("Nothing new.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(Array(selectedItem.keyChanges.prefix(4).enumerated()), id: \.offset) { _, change in
-                            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(color(for: selectedItem.health))
-                                    .frame(width: 12)
-                                Text(change)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                                    .lineSpacing(1)
-                            }
-                        }
-                    }
-                }
-                .padding(18)
-
-                Divider()
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Actions")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .tracking(1.2)
-                    .textCase(.uppercase)
-
-                Button(action: onRefresh) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .controlSize(.small)
-
-                Button(action: onOpenFolder) {
-                    Label("Automation Folder", systemImage: "folder")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .controlSize(.small)
-
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
                 if let selectedItem {
-                    Button {
-                        let memoryURL = URL(fileURLWithPath: selectedItem.automationPath)
-                            .appendingPathComponent("memory.md")
-                        NSWorkspace.shared.open(memoryURL)
-                    } label: {
-                        Label("Full info", systemImage: "doc.text.magnifyingglass")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .controlSize(.small)
-                }
+                    Text(compactSchedule(selectedItem.schedule))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary.opacity(0.82))
+                        .lineLimit(1)
 
-                if let selectedItem, selectedItem.needsApproval {
-                    Button(action: { onReviewAutomation(selectedItem) }) {
-                        Label("Review in Codex", systemImage: "arrow.up.forward.app")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .controlSize(.small)
-                }
+                    InspectorList(items: selectedItem.affectedItems, marker: "–")
 
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(selectedItem.confidenceText)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.74))
+                        Text(selectedItem.safetyText)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary.opacity(0.66))
+                            .lineLimit(2)
+                    }
+                }
             }
-            .padding(18)
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 20)
         }
         .background(Color(nsColor: .controlBackgroundColor))
     }
 }
 
-struct StatPill: View {
+func compactSchedule(_ schedule: String) -> String {
+    schedule
+        .replacingOccurrences(of: "Weekly ", with: "Weekly · ")
+        .replacingOccurrences(of: "Daily at ", with: "Daily · ")
+        .replacingOccurrences(of: " at ", with: " ")
+}
+
+struct InspectorSection<Content: View>: View {
     let title: String
-    let value: String
-    let tint: Color
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
 
     var body: some View {
-        HStack(spacing: 5) {
-            Text(value)
-                .font(.system(size: 12, weight: .semibold))
+        VStack(alignment: .leading, spacing: 9) {
             Text(title)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary.opacity(0.64))
+
+            content
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(tint.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
-struct MiniTag: View {
-    let text: String
+struct InspectorList: View {
+    let items: [String]
+    let marker: String
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 9))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color(nsColor: .separatorColor).opacity(0.16))
-            .clipShape(Capsule())
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(items, id: \.self) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(marker)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary.opacity(0.72))
+                        .frame(width: 10, alignment: .leading)
+                    Text(item)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary.opacity(0.78))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 }
 
@@ -1045,11 +1354,34 @@ func symbol(for health: AutomationHealth) -> String {
 
 func statusLabel(for health: AutomationHealth) -> String {
     switch health {
-    case .active: return "OK"
-    case .approval: return "Needs OK"
-    case .blocked: return "Blocked"
+    case .active: return "Live"
+    case .approval: return "Needs review"
+    case .blocked: return "Attention"
     case .paused: return "Paused"
     }
+}
+
+func shortStatus(for health: AutomationHealth) -> String {
+    switch health {
+    case .active: return "Live"
+    case .approval: return "Review"
+    case .blocked: return "!"
+    case .paused: return "Paused"
+    }
+}
+
+func relativeUpdatedText(_ date: Date?) -> String {
+    guard let date else { return "not refreshed" }
+    let seconds = Int(Date().timeIntervalSince(date))
+    if seconds < 5 { return "updated just now" }
+    if seconds < 60 { return "updated \(seconds)s ago" }
+    let minutes = seconds / 60
+    if minutes < 60 { return "updated \(minutes)m ago" }
+
+    let formatter = DateFormatter()
+    formatter.dateStyle = .none
+    formatter.timeStyle = .short
+    return "updated \(formatter.string(from: date))"
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -1069,31 +1401,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             button.action = #selector(togglePopover(_:))
             button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
             button.toolTip = "Codex Automations"
         }
 
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 334, height: 286)
+        popover.contentSize = fastPopoverSize()
         popover.contentViewController = NSHostingController(
             rootView: FastReportView(
                 model: model,
-                onRefresh: { [weak self] in
-                    self?.model.refresh()
-                    self?.updateIcon()
-                },
-                onOpenCodex: { [weak self] in
-                    self?.openCodex()
-                },
                 onOpenReportWindow: { [weak self] in
                     self?.showReportWindow()
                 },
-                onOpenFolder: { [weak self] in
-                    guard let self else { return }
-                    NSWorkspace.shared.open(self.model.rootURL)
-                },
-                onQuit: {
-                    NSApp.terminate(nil)
+                onReviewAutomation: { [weak self] item in
+                    self?.reviewAutomation(item)
                 }
             )
         )
@@ -1102,25 +1425,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.model.refresh()
             self?.updateIcon()
+            self?.updateReportWindowTitle()
         }
     }
 
     @objc private func togglePopover(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showStatusMenu(from: sender)
+            return
+        }
+
         if popover.isShown {
             popover.performClose(sender)
         } else {
             model.refresh()
             updateIcon()
+            updateReportWindowTitle()
+            popover.contentSize = fastPopoverSize()
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
     }
 
+    private func showStatusMenu(from sender: NSStatusBarButton) {
+        model.refresh()
+        updateIcon()
+        updateReportWindowTitle()
+        popover.performClose(nil)
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        addMenuItem("Open Codex", systemSymbol: "arrow.up.forward.app", action: #selector(openCodexFromMenu), to: menu)
+        addMenuItem("Open Control Window", systemSymbol: "macwindow", action: #selector(openWindowFromMenu), to: menu)
+
+        let reviewItem = addMenuItem(
+            "Review Next Approval",
+            systemSymbol: "checkmark.seal",
+            action: #selector(reviewNextApprovalFromMenu),
+            to: menu
+        )
+        reviewItem.isEnabled = model.needsAttentionItems.contains { $0.needsApproval || $0.health == .blocked }
+
+        menu.addItem(.separator())
+        addMenuItem("Refresh", systemSymbol: "arrow.clockwise", action: #selector(refreshFromMenu), to: menu)
+        addMenuItem("Open Automations Folder", systemSymbol: "folder", action: #selector(openFolderFromMenu), to: menu)
+        addMenuItem("Automation Settings", systemSymbol: "slider.horizontal.3", action: #selector(openSettingsFromMenu), to: menu)
+
+        menu.addItem(.separator())
+        addMenuItem("Quit", systemSymbol: "power", action: #selector(quitFromMenu), to: menu)
+
+        menu.popUp(positioning: nil, at: NSPoint(x: sender.bounds.midX, y: sender.bounds.minY - 4), in: sender)
+    }
+
+    @discardableResult
+    private func addMenuItem(
+        _ title: String,
+        systemSymbol: String,
+        action: Selector,
+        to menu: NSMenu
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.image = NSImage(systemSymbolName: systemSymbol, accessibilityDescription: title)
+        menu.addItem(item)
+        return item
+    }
+
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
         button.image = makeStatusIcon(for: model.overallHealth)
-        button.contentTintColor = nsColor(for: model.overallHealth)
+        button.contentTintColor = .white
         button.toolTip = "Codex Automations: \(model.headline)"
+    }
+
+    private func updateReportWindowTitle() {
+        reportWindow?.title = "Codex Automations · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
+    }
+
+    private func fastPopoverSize() -> NSSize {
+        NSSize(width: 340, height: fastPopoverHeight(for: model.items))
     }
 
     private func openCodex() {
@@ -1131,24 +1515,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openCodex(at: item.workingPath ?? item.automationPath)
     }
 
+    @objc private func openCodexFromMenu() {
+        openCodex()
+    }
+
+    @objc private func openWindowFromMenu() {
+        showReportWindow()
+    }
+
+    @objc private func reviewNextApprovalFromMenu() {
+        showReportWindow()
+    }
+
+    @objc private func refreshFromMenu() {
+        model.refresh()
+        updateIcon()
+        updateReportWindowTitle()
+    }
+
+    @objc private func openFolderFromMenu() {
+        NSWorkspace.shared.open(model.rootURL)
+    }
+
+    @objc private func openSettingsFromMenu() {
+        NSWorkspace.shared.open(model.rootURL)
+    }
+
+    @objc private func quitFromMenu() {
+        NSApp.terminate(nil)
+    }
+
     private func showReportWindow() {
         model.refresh()
         updateIcon()
         popover.performClose(nil)
 
         if let reportWindow {
+            updateReportWindowTitle()
             reportWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 1040, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Codex Automation Report"
+        window.title = "Codex Automations · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
         window.center()
         window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(
@@ -1157,13 +1572,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 onRefresh: { [weak self] in
                     self?.model.refresh()
                     self?.updateIcon()
+                    self?.updateReportWindowTitle()
                 },
                 onReviewAutomation: { [weak self] item in
                     self?.reviewAutomation(item)
-                },
-                onOpenFolder: { [weak self] in
-                    guard let self else { return }
-                    NSWorkspace.shared.open(self.model.rootURL)
                 }
             )
         )
@@ -1195,17 +1607,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeStatusIcon(for health: AutomationHealth) -> NSImage {
-        let symbolName = "gearshape.2"
-        let fallbackName = symbol(for: health)
-        let image = NSImage(
-            systemSymbolName: symbolName,
-            accessibilityDescription: "Codex automation status"
-        ) ?? NSImage(
-            systemSymbolName: fallbackName,
-            accessibilityDescription: "Codex automation status"
-        ) ?? NSImage(size: NSSize(width: 18, height: 18))
-        image.isTemplate = true
-        image.size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: NSSize(width: 24, height: 18))
+        image.lockFocus()
+
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14.5, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+        let symbolImage = (
+            NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Codex automation status")
+            ?? NSImage(systemSymbolName: "timer", accessibilityDescription: "Codex automation status")
+            ?? NSImage(systemSymbolName: "clock", accessibilityDescription: "Codex automation status")
+        )?.withSymbolConfiguration(symbolConfiguration)
+
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 1.4
+        shadow.shadowOffset = NSSize(width: 0, height: -0.4)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.36)
+        shadow.set()
+
+        symbolImage?.draw(
+            in: NSRect(x: 3.2, y: 2.1, width: 14.6, height: 14.6),
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1
+        )
+        NSGraphicsContext.restoreGraphicsState()
+
+        let dotRect = NSRect(x: 16.1, y: 3.1, width: 5.2, height: 5.2)
+        NSColor.white.withAlphaComponent(0.92).setFill()
+        NSBezierPath(ovalIn: dotRect.insetBy(dx: -1.1, dy: -1.1)).fill()
+        nsColor(for: health).setFill()
+        NSBezierPath(ovalIn: dotRect).fill()
+
+        image.unlockFocus()
+        image.isTemplate = false
+        image.size = NSSize(width: 24, height: 18)
         return image
     }
 }

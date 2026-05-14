@@ -1,21 +1,21 @@
 # Codex Automation Menu
 
-Tiny macOS menu bar helper for local Codex automations.
+Tiny macOS menu bar control surface for local Codex automations.
 
 It reads:
 
 - `~/.codex/automations/*/automation.toml`
 - `~/.codex/automations/*/memory.md`
 
-The menu bar popover is a fast report: status counts, lightweight row status, and actions.
+The menu bar popover is the fast surface: live status, review hints, and one-step actions.
 
-The full report window has the richer summary: approval hints, schedules, model info, newest memory highlights, smallest next steps, and a quieter inspector for key changes.
+The control window is for lightweight inspection: overview, recent actions, approval permissions, affected areas, and proposed changes.
 
 Actions:
 
 - Open Codex
-- Open Full Report window
-- Review a `Needs OK` automation in Codex
+- Open Control window
+- Review an automation in Codex
 - Open the local automation folder
 - Refresh
 - Quit
@@ -24,7 +24,7 @@ Icon colors:
 
 - Green: automations look active
 - Orange: approval-style guardrails are present
-- Red: latest memory suggests a blocker
+- Red: attention is needed
 - Gray: no active automations
 
 Run:
