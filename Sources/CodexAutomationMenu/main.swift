@@ -979,7 +979,7 @@ struct ReportWindowView: View {
                 .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
             }
         }
-        .frame(minWidth: 880, minHeight: 560)
+        .frame(minWidth: 820, minHeight: 430)
         .onAppear {
             if model.selectedAutomationID == nil {
                 model.selectedAutomationID = model.items.first?.id
@@ -1362,8 +1362,9 @@ struct ReportContentsView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 28)
+            .padding(.leading, 30)
+            .padding(.trailing, 34)
+            .padding(.vertical, 26)
         }
         .background(Color(nsColor: .controlBackgroundColor))
     }
@@ -1515,7 +1516,7 @@ struct InspectorRow<Content: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 18) {
             HStack(spacing: 6) {
                 Text(title)
                     .font(.system(size: 13, weight: .regular))
@@ -1527,11 +1528,10 @@ struct InspectorRow<Content: View>: View {
                         .foregroundStyle(.secondary.opacity(0.55))
                 }
             }
-            .frame(width: 76, alignment: .leading)
+            .frame(width: 82, alignment: .leading)
 
-            Spacer(minLength: 12)
             content
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -2341,17 +2341,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let reportWindow {
             updateReportWindowTitle()
+            if !reportWindow.isVisible {
+                reportWindow.setContentSize(reportWindowPreferredSize())
+                reportWindow.center()
+            }
             reportWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
+        let preferredSize = reportWindowPreferredSize()
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1040, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: preferredSize.width, height: preferredSize.height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        window.minSize = NSSize(width: 820, height: 430)
         window.title = "Codex Automations · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
         window.center()
         window.isReleasedWhenClosed = false
@@ -2371,6 +2377,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reportWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func reportWindowPreferredSize() -> NSSize {
+        let visibleRows = min(max(model.items.count, 1), 6)
+        let height = min(max(472, 402 + visibleRows * 22), 560)
+        return NSSize(width: 960, height: CGFloat(height))
     }
 
     private func openCodexApp() {
