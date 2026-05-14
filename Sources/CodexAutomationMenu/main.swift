@@ -871,7 +871,7 @@ struct FastStatusRow: View {
 
             if hovering && item.needsApproval {
                 Button(action: onReview) {
-                    Text("Open in Codex")
+                    Text("Open")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(color(for: item.health))
                 }
@@ -1068,7 +1068,7 @@ struct SidebarAutomationRow: View {
 
             if hovering && item.needsApproval {
                 Button(action: onReview) {
-                    Text("Open in Codex")
+                    Text("Open")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(color(for: item.health))
                 }
@@ -1089,7 +1089,6 @@ struct SidebarAutomationRow: View {
         .onTapGesture(perform: onSelect)
         .onHover { hovering = $0 }
         .contextMenu {
-            Button("Open Automations", action: onReview)
             Button("Open Codex", action: onOpenCodex)
             Button("Open Folder", action: onOpenFolder)
             Divider()
@@ -1860,14 +1859,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addMenuItem("Open Codex", systemSymbol: "arrow.up.forward.app", action: #selector(openCodexFromMenu), to: menu)
         addMenuItem("Open Control Window", systemSymbol: "macwindow", action: #selector(openWindowFromMenu), to: menu)
 
-        let reviewItem = addMenuItem(
-            "Open Automations",
-            systemSymbol: "clock.arrow.circlepath",
-            action: #selector(reviewNextApprovalFromMenu),
-            to: menu
-        )
-        reviewItem.isEnabled = model.needsAttentionItems.contains { $0.needsApproval || $0.health == .blocked }
-
         menu.addItem(.separator())
         addMenuItem("Refresh", systemSymbol: "arrow.clockwise", action: #selector(refreshFromMenu), to: menu)
         addMenuItem("Open Automations Folder", systemSymbol: "folder", action: #selector(openFolderFromMenu), to: menu)
@@ -1909,7 +1900,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openCodex() {
-        openCodex(at: model.rootURL.path)
+        openCodexApp()
     }
 
     private func reviewAutomationInCodex(_ item: AutomationItem) {
@@ -1926,14 +1917,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openWindowFromMenu() {
         showReportWindow()
-    }
-
-    @objc private func reviewNextApprovalFromMenu() {
-        guard let item = model.needsAttentionItems.first else {
-            showReportWindow()
-            return
-        }
-        reviewAutomationInCodex(item)
     }
 
     @objc private func refreshFromMenu() {
@@ -1998,16 +1981,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func openCodex(at path: String) {
-        let codexCLI = URL(fileURLWithPath: "/opt/homebrew/bin/codex")
-        if FileManager.default.fileExists(atPath: codexCLI.path) {
-            let process = Process()
-            process.executableURL = codexCLI
-            process.arguments = ["app", path]
-            try? process.run()
-            return
-        }
-
+    private func openCodexApp() {
         let codexURL = URL(fileURLWithPath: "/Applications/Codex.app")
         if FileManager.default.fileExists(atPath: codexURL.path) {
             NSWorkspace.shared.openApplication(
@@ -2017,20 +1991,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        let codexCLI = URL(fileURLWithPath: "/opt/homebrew/bin/codex")
+        if FileManager.default.fileExists(atPath: codexCLI.path) {
+            let process = Process()
+            process.executableURL = codexCLI
+            process.arguments = ["app"]
+            try? process.run()
+            return
+        }
     }
 
     private func openCodexAutomation(_: AutomationItem) {
-        var components = URLComponents()
-        components.scheme = "codex"
-        components.host = "automations"
-
-        guard let url = components.url else {
-            openCodex()
-            return
-        }
-
-        NSWorkspace.shared.open(url)
+        openCodexApp()
     }
 
     private func makeStatusIcon(for health: AutomationHealth) -> NSImage {
