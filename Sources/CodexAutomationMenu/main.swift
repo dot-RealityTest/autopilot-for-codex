@@ -1,5 +1,11 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
+
+extension Notification.Name {
+    static let toggleAutomationSidebar = Notification.Name("toggleAutomationSidebar")
+    static let toggleAutomationInspector = Notification.Name("toggleAutomationInspector")
+}
 
 enum AutomationHealth: String {
     case active = "Active"
@@ -775,58 +781,61 @@ final class AutomationModel: ObservableObject {
 struct FastReportView: View {
     @ObservedObject var model: AutomationModel
     let onOpenReportWindow: () -> Void
-    let onReviewAutomation: (AutomationItem) -> Void
+    let onOpenAutomationWindow: (AutomationItem) -> Void
     @State private var isOpenAppHovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 8) {
             header
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 1) {
                 ForEach(model.items.prefix(4)) { item in
                     FastStatusRow(
                         item: item,
-                        onOpen: onOpenReportWindow,
+                        onOpen: {
+                            onOpenAutomationWindow(item)
+                        },
                         onReview: {
-                            onReviewAutomation(item)
+                            onOpenAutomationWindow(item)
                         }
                     )
                 }
             }
         }
-        .padding(.top, 14)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .padding(.top, 12)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
         .frame(width: fastPopoverWidth(), height: fastPopoverHeight(for: model.items))
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Codex Automations")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .semibold))
                     .lineLimit(1)
                 Text("\(model.activeCount) active · \(updatedText.lowercased())")
-                    .font(.system(size: 11))
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
             Button(action: onOpenReportWindow) {
                 Text("Open App")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(isOpenAppHovering ? Color.accentColor : Color.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
                     .background(
                         Capsule()
                             .fill(Color.primary.opacity(isOpenAppHovering ? 0.055 : 0))
                     )
             }
             .buttonStyle(.plain)
+            .contentShape(Capsule())
             .onHover { isOpenAppHovering = $0 }
         }
     }
@@ -837,12 +846,12 @@ struct FastReportView: View {
 }
 
 func fastPopoverWidth() -> CGFloat {
-    320
+    292
 }
 
 func fastPopoverHeight(for items: [AutomationItem]) -> CGFloat {
     let visibleRows = CGFloat(min(max(items.count, 1), 4))
-    return 64 + visibleRows * 30
+    return 56 + visibleRows * 27
 }
 
 struct FastStatusRow: View {
@@ -859,7 +868,7 @@ struct FastStatusRow: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(item.name)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 10.8, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                     }
@@ -879,7 +888,7 @@ struct FastStatusRow: View {
             }
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .background(hovering ? Color.primary.opacity(0.045) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .onHover { hovering = $0 }
@@ -933,6 +942,8 @@ struct ReportWindowView: View {
     @ObservedObject var model: AutomationModel
     let onRefresh: () -> Void
     let onOpenCodexAutomation: (AutomationItem) -> Void
+    @State private var showsSidebar = true
+    @State private var showsInspector = true
 
     private var selectedItem: AutomationItem? {
         if let selectedAutomationID = model.selectedAutomationID,
@@ -944,12 +955,14 @@ struct ReportWindowView: View {
 
     var body: some View {
         HSplitView {
-            ReportSidebarView(
-                model: model,
-                onOpenCodexAutomation: onOpenCodexAutomation,
-                onRefresh: onRefresh
-            )
-            .frame(minWidth: 180, idealWidth: 210, maxWidth: 280)
+            if showsSidebar {
+                ReportSidebarView(
+                    model: model,
+                    onOpenCodexAutomation: onOpenCodexAutomation,
+                    onRefresh: onRefresh
+                )
+                .frame(minWidth: 180, idealWidth: 210, maxWidth: 280)
+            }
 
             ReportDocumentView(
                 model: model,
@@ -958,11 +971,13 @@ struct ReportWindowView: View {
             .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(1)
 
-            ReportContentsView(
-                model: model,
-                selectedItem: selectedItem
-            )
-            .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
+            if showsInspector {
+                ReportContentsView(
+                    model: model,
+                    selectedItem: selectedItem
+                )
+                .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
+            }
         }
         .frame(minWidth: 880, minHeight: 560)
         .onAppear {
@@ -980,6 +995,16 @@ struct ReportWindowView: View {
                 return
             }
             model.selectedAutomationID = items.first?.id
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleAutomationSidebar)) { _ in
+            withAnimation(.easeInOut(duration: 0.16)) {
+                showsSidebar.toggle()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleAutomationInspector)) { _ in
+            withAnimation(.easeInOut(duration: 0.16)) {
+                showsInspector.toggle()
+            }
         }
     }
 }
@@ -1005,9 +1030,6 @@ struct ReportSidebarView: View {
                             isSelected: model.selectedAutomationID == item.id,
                             onSelect: {
                                 model.selectedAutomationID = item.id
-                            },
-                            onReview: {
-                                onOpenCodexAutomation(item)
                             },
                             onOpenCodex: {
                                 onOpenCodexAutomation(item)
@@ -1045,12 +1067,10 @@ struct SidebarAutomationRow: View {
     let item: AutomationItem
     let isSelected: Bool
     let onSelect: () -> Void
-    let onReview: () -> Void
     let onOpenCodex: () -> Void
     let onOpenFolder: () -> Void
     let onRefresh: () -> Void
     let onCopySummary: () -> Void
-    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1065,15 +1085,6 @@ struct SidebarAutomationRow: View {
             }
 
             Spacer(minLength: 0)
-
-            if hovering && item.needsApproval {
-                Button(action: onReview) {
-                    Text("Open")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(color(for: item.health))
-                }
-                .buttonStyle(.plain)
-            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -1087,7 +1098,6 @@ struct SidebarAutomationRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
-        .onHover { hovering = $0 }
         .contextMenu {
             Button("Open Codex", action: onOpenCodex)
             Button("Open Folder", action: onOpenFolder)
@@ -1361,10 +1371,11 @@ struct ReportContentsView: View {
 
 struct CodexAutomationInspector: View {
     let item: AutomationItem
+    @State private var showsPreviousRuns = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 30) {
-            VStack(alignment: .leading, spacing: 19) {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 16) {
                 InspectorRow(title: "Status") {
                     InspectorStatusPill(health: item.health)
                 }
@@ -1394,21 +1405,15 @@ struct CodexAutomationInspector: View {
                 }
             }
 
-            InspectorGroup(title: "Previous runs") {
-                if item.previousRuns.isEmpty {
-                    Text("No previous runs yet")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary.opacity(0.68))
-                } else {
-                    VStack(alignment: .leading, spacing: 15) {
-                        ForEach(item.previousRuns.prefix(3)) { run in
-                            PreviousRunRow(run: run) {
-                                openMemoryFile()
-                            }
-                        }
-                    }
-                }
-            }
+            PreviousRunsDisclosure(
+                runs: item.previousRuns,
+                isExpanded: $showsPreviousRuns,
+                onOpenRun: openMemoryFile
+            )
+            .padding(.top, -2)
+        }
+        .onChange(of: item.id) { _ in
+            showsPreviousRuns = false
         }
     }
 
@@ -1418,6 +1423,63 @@ struct CodexAutomationInspector: View {
             NSWorkspace.shared.open(memoryURL)
         } else {
             NSWorkspace.shared.open(URL(fileURLWithPath: item.automationPath))
+        }
+    }
+}
+
+struct PreviousRunsDisclosure: View {
+    let runs: [AutomationRunRecord]
+    @Binding var isExpanded: Bool
+    let onOpenRun: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isExpanded ? 11 : 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.62))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 12)
+
+                    Text("Previous runs")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary.opacity(0.72))
+
+                    Spacer(minLength: 8)
+
+                    if !runs.isEmpty {
+                        Text("\(min(runs.count, 3))")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary.opacity(0.65))
+                            .padding(.trailing, 1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 1)
+
+            if isExpanded {
+                if runs.isEmpty {
+                    Text("No previous runs yet")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary.opacity(0.68))
+                        .padding(.leading, 19)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(runs.prefix(3)) { run in
+                            PreviousRunRow(run: run, onOpen: onOpenRun)
+                        }
+                    }
+                    .padding(.leading, 2)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
         }
     }
 }
@@ -1432,7 +1494,7 @@ struct InspectorGroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary.opacity(0.72))
@@ -1784,15 +1846,214 @@ func relativeUpdatedText(_ date: Date?) -> String {
     return "updated \(formatter.string(from: date))"
 }
 
+final class AppSettings: ObservableObject {
+    private enum Keys {
+        static let notificationsEnabled = "notificationsEnabled"
+        static let backgroundStopped = "backgroundStopped"
+    }
+
+    @Published private(set) var notificationsEnabled: Bool
+    @Published private(set) var launchAtLoginEnabled: Bool
+    @Published private(set) var backgroundStopped: Bool
+    @Published private(set) var launchAtLoginError: String?
+
+    private let defaults = UserDefaults.standard
+
+    init() {
+        if defaults.object(forKey: Keys.notificationsEnabled) == nil {
+            notificationsEnabled = true
+        } else {
+            notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
+        }
+        backgroundStopped = defaults.bool(forKey: Keys.backgroundStopped)
+
+        if #available(macOS 13.0, *) {
+            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+        } else {
+            launchAtLoginEnabled = false
+        }
+    }
+
+    func setNotificationsEnabled(_ enabled: Bool) {
+        notificationsEnabled = enabled
+        defaults.set(enabled, forKey: Keys.notificationsEnabled)
+    }
+
+    func setBackgroundStopped(_ stopped: Bool) {
+        backgroundStopped = stopped
+        defaults.set(stopped, forKey: Keys.backgroundStopped)
+    }
+
+    func setLaunchAtLoginEnabled(_ enabled: Bool) {
+        launchAtLoginError = nil
+
+        guard #available(macOS 13.0, *) else {
+            launchAtLoginEnabled = false
+            launchAtLoginError = "Requires macOS 13 or later."
+            return
+        }
+
+        do {
+            if enabled, SMAppService.mainApp.status != .enabled {
+                try SMAppService.mainApp.register()
+            } else if !enabled, SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+        } catch {
+            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+            launchAtLoginError = "Could not update Login Items."
+        }
+    }
+}
+
+struct SettingsWindowView: View {
+    @ObservedObject var settings: AppSettings
+    let onStop: () -> Void
+    let onResume: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Settings")
+                    .font(.system(size: 20, weight: .semibold))
+                Text("Quiet controls for background automation.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                SettingsToggleRow(
+                    title: "Notifications",
+                    subtitle: "Allow Codex Automations to surface status changes.",
+                    isOn: Binding(
+                        get: { settings.notificationsEnabled },
+                        set: { settings.setNotificationsEnabled($0) }
+                    )
+                )
+
+                SettingsToggleRow(
+                    title: "Open at Login",
+                    subtitle: "Start this menu bar utility when you sign in.",
+                    isOn: Binding(
+                        get: { settings.launchAtLoginEnabled },
+                        set: { settings.setLaunchAtLoginEnabled($0) }
+                    )
+                )
+
+                if let launchAtLoginError = settings.launchAtLoginError {
+                    Text(launchAtLoginError)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Background")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    StatusDot(health: settings.backgroundStopped ? .paused : .active, size: 7)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(settings.backgroundStopped ? "Stopped" : "Running")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(settings.backgroundStopped ? "No background refresh is running." : "Refreshes quietly in the menu bar.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(settings.backgroundStopped ? "Resume" : "Stop") {
+                        if settings.backgroundStopped {
+                            onResume()
+                        } else {
+                            onStop()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Keyboard")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                VStack(spacing: 7) {
+                    ShortcutRow(keys: "⌘,", action: "Settings")
+                    ShortcutRow(keys: "⌘R", action: "Refresh")
+                    ShortcutRow(keys: "⌘S", action: "Stop / Resume")
+                    ShortcutRow(keys: "⌘B", action: "Sidebar")
+                    ShortcutRow(keys: "⌘I", action: "Inspector")
+                    ShortcutRow(keys: "⌘O", action: "Control window")
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(26)
+        .frame(width: 430, height: 440)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+struct SettingsToggleRow: View {
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Toggle("", isOn: $isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+    }
+}
+
+struct ShortcutRow: View {
+    let keys: String
+    let action: String
+
+    var body: some View {
+        HStack {
+            Text(action)
+                .font(.system(size: 12))
+                .foregroundStyle(.primary.opacity(0.86))
+            Spacer()
+            Text(keys)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.055))
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = AutomationModel()
+    private let settings = AppSettings()
     private let popover = NSPopover()
     private var statusItem: NSStatusItem?
     private var reportWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        installApplicationMenu()
         model.refresh()
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -1815,18 +2076,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 onOpenReportWindow: { [weak self] in
                     self?.showReportWindow()
                 },
-                onReviewAutomation: { [weak self] item in
-                    self?.reviewAutomationInCodex(item)
+                onOpenAutomationWindow: { [weak self] item in
+                    self?.showReportWindow(selecting: item.id)
                 }
             )
         )
 
         updateIcon()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.model.refresh()
-            self?.updateIcon()
-            self?.updateReportWindowTitle()
-        }
+        applyRunMode()
     }
 
     @objc private func togglePopover(_ sender: NSStatusBarButton) {
@@ -1861,8 +2118,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         addMenuItem("Refresh", systemSymbol: "arrow.clockwise", action: #selector(refreshFromMenu), to: menu)
+        if settings.backgroundStopped {
+            addMenuItem("Resume Background", systemSymbol: "play.fill", action: #selector(resumeBackgroundFromMenu), to: menu)
+        } else {
+            addMenuItem("Stop Background", systemSymbol: "pause.fill", action: #selector(stopBackgroundFromMenu), to: menu)
+        }
         addMenuItem("Open Automations Folder", systemSymbol: "folder", action: #selector(openFolderFromMenu), to: menu)
-        addMenuItem("Automation Settings", systemSymbol: "slider.horizontal.3", action: #selector(openSettingsFromMenu), to: menu)
+        addMenuItem("Settings...", systemSymbol: "gearshape", action: #selector(openSettingsFromMenu), to: menu)
 
         menu.addItem(.separator())
         addMenuItem("Quit", systemSymbol: "power", action: #selector(quitFromMenu), to: menu)
@@ -1884,11 +2146,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
+    private func installApplicationMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu(title: "Codex Automations")
+        appMenuItem.submenu = appMenu
+        addCommand("Settings...", key: ",", action: #selector(openSettingsFromMenu), to: appMenu)
+        appMenu.addItem(.separator())
+        addCommand("Quit Codex Automations", key: "q", action: #selector(quitFromMenu), to: appMenu)
+
+        let automationMenuItem = NSMenuItem()
+        mainMenu.addItem(automationMenuItem)
+        let automationMenu = NSMenu(title: "Automation")
+        automationMenuItem.submenu = automationMenu
+        addCommand("Open Control Window", key: "o", action: #selector(openWindowFromMenu), to: automationMenu)
+        addCommand("Refresh", key: "r", action: #selector(refreshFromMenu), to: automationMenu)
+        addCommand("Stop / Resume Background", key: "s", action: #selector(toggleBackgroundFromMenu), to: automationMenu)
+
+        let viewMenuItem = NSMenuItem()
+        mainMenu.addItem(viewMenuItem)
+        let viewMenu = NSMenu(title: "View")
+        viewMenuItem.submenu = viewMenu
+        addCommand("Toggle Sidebar", key: "b", action: #selector(toggleSidebarFromMenu), to: viewMenu)
+        addCommand("Toggle Inspector", key: "i", action: #selector(toggleInspectorFromMenu), to: viewMenu)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    @discardableResult
+    private func addCommand(_ title: String, key: String, action: Selector, to menu: NSMenu) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        item.keyEquivalentModifierMask = .command
+        menu.addItem(item)
+        return item
+    }
+
+    private func applyRunMode() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+
+        guard !settings.backgroundStopped else {
+            updateIcon()
+            updateReportWindowTitle()
+            return
+        }
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.model.refresh()
+            self?.updateIcon()
+            self?.updateReportWindowTitle()
+        }
+    }
+
+    private func setBackgroundStopped(_ stopped: Bool) {
+        settings.setBackgroundStopped(stopped)
+        applyRunMode()
+    }
+
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
-        button.image = makeStatusIcon(for: model.overallHealth)
+        button.image = makeStatusIcon(for: settings.backgroundStopped ? .paused : model.overallHealth)
         button.contentTintColor = .white
-        button.toolTip = "Codex Automations: \(model.headline)"
+        button.toolTip = settings.backgroundStopped ? "Codex Automations: stopped" : "Codex Automations: \(model.headline)"
     }
 
     private func updateReportWindowTitle() {
@@ -1925,16 +2247,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateReportWindowTitle()
     }
 
+    @objc private func stopBackgroundFromMenu() {
+        setBackgroundStopped(true)
+    }
+
+    @objc private func resumeBackgroundFromMenu() {
+        setBackgroundStopped(false)
+        model.refresh()
+        updateIcon()
+        updateReportWindowTitle()
+    }
+
+    @objc private func toggleBackgroundFromMenu() {
+        if settings.backgroundStopped {
+            resumeBackgroundFromMenu()
+        } else {
+            stopBackgroundFromMenu()
+        }
+    }
+
+    @objc private func toggleSidebarFromMenu() {
+        showReportWindow()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .toggleAutomationSidebar, object: nil)
+        }
+    }
+
+    @objc private func toggleInspectorFromMenu() {
+        showReportWindow()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .toggleAutomationInspector, object: nil)
+        }
+    }
+
     @objc private func openFolderFromMenu() {
         NSWorkspace.shared.open(model.rootURL)
     }
 
     @objc private func openSettingsFromMenu() {
-        NSWorkspace.shared.open(model.rootURL)
+        showSettingsWindow()
     }
 
     @objc private func quitFromMenu() {
         NSApp.terminate(nil)
+    }
+
+    private func showSettingsWindow() {
+        popover.performClose(nil)
+
+        if let settingsWindow {
+            settingsWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: 440),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Settings"
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.contentViewController = NSHostingController(
+            rootView: SettingsWindowView(
+                settings: settings,
+                onStop: { [weak self] in
+                    self?.setBackgroundStopped(true)
+                },
+                onResume: { [weak self] in
+                    self?.setBackgroundStopped(false)
+                    self?.model.refresh()
+                    self?.updateIcon()
+                    self?.updateReportWindowTitle()
+                }
+            )
+        )
+        settingsWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func showReportWindow(selecting automationID: String? = nil) {
