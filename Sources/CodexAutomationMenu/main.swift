@@ -14,15 +14,20 @@ struct AutomationItem: Identifiable {
     let kind: String
     let status: String
     let schedule: String
+    let rrule: String
     let model: String
     let reasoning: String
+    let executionEnvironment: String
+    let projectName: String
     let cwdCount: Int
     let needsApproval: Bool
     let blocker: String?
     let lastNote: String?
     let keyChanges: [String]
     let nextChanges: [String]
+    let previousRuns: [AutomationRunRecord]
     let automationPath: String
+    let memoryPath: String
     let workingPath: String?
 
     var health: AutomationHealth {
@@ -142,6 +147,14 @@ struct AutomationItem: Identifiable {
         }
     }
 
+    var lastRunDate: Date? {
+        previousRuns.first?.date
+    }
+
+    var nextRunDate: Date? {
+        ScheduleRule(rrule: rrule).nextRun()
+    }
+
     private static func operationalText(_ text: String) -> String {
         let lowercased = text.lowercased()
         if lowercased.contains("wrapper-style skills") || lowercased.contains("user-created") {
@@ -184,6 +197,72 @@ struct AutomationItem: Identifiable {
         }
 
         return result.count > 44 ? String(result.prefix(41)) + "..." : result
+    }
+}
+
+struct AutomationRunRecord: Identifiable {
+    let id = UUID()
+    let title: String
+    let project: String
+    let date: Date
+    let succeeded: Bool
+}
+
+struct ScheduleRule {
+    let parts: [String: String]
+
+    init(rrule: String) {
+        parts = Dictionary(uniqueKeysWithValues: rrule.split(separator: ";").compactMap { part -> (String, String)? in
+            let pair = part.split(separator: "=", maxSplits: 1)
+            guard pair.count == 2 else { return nil }
+            return (String(pair[0]), String(pair[1]))
+        })
+    }
+
+    func nextRun(after now: Date = Date()) -> Date? {
+        guard parts["FREQ"] == "DAILY" || parts["FREQ"] == "WEEKLY" else { return nil }
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+
+        let hour = parts["BYHOUR"].flatMap(Int.init) ?? 0
+        let minute = parts["BYMINUTE"].flatMap(Int.init) ?? 0
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.hour = hour
+        components.minute = minute
+        components.second = 0
+
+        if parts["FREQ"] == "DAILY" {
+            guard let today = calendar.date(from: components) else { return nil }
+            return today > now ? today : calendar.date(byAdding: .day, value: 1, to: today)
+        }
+
+        guard let targetWeekday = weekdayNumber(parts["BYDAY"]) else { return nil }
+        let currentWeekday = calendar.component(.weekday, from: now)
+        var daysToAdd = (targetWeekday - currentWeekday + 7) % 7
+        if daysToAdd == 0,
+           let today = calendar.date(from: components),
+           today <= now {
+            daysToAdd = 7
+        }
+        guard let targetDay = calendar.date(byAdding: .day, value: daysToAdd, to: now) else { return nil }
+        components = calendar.dateComponents([.year, .month, .day], from: targetDay)
+        components.hour = hour
+        components.minute = minute
+        components.second = 0
+        return calendar.date(from: components)
+    }
+
+    private func weekdayNumber(_ day: String?) -> Int? {
+        switch day {
+        case "SU": return 1
+        case "MO": return 2
+        case "TU": return 3
+        case "WE": return 4
+        case "TH": return 5
+        case "FR": return 6
+        case "SA": return 7
+        default: return nil
+        }
     }
 }
 
@@ -259,6 +338,7 @@ struct DiffLine: Identifiable {
 final class AutomationModel: ObservableObject {
     @Published private(set) var items: [AutomationItem] = []
     @Published private(set) var lastUpdated: Date?
+    @Published var selectedAutomationID: String?
 
     private let automationsRoot = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".codex/automations")
@@ -321,8 +401,9 @@ final class AutomationModel: ObservableObject {
 
             let values = Self.parseConfig(config)
             let prompt = values["prompt", default: ""]
+            let memoryURL = directory.appendingPathComponent("memory.md")
             let memory = try? String(
-                contentsOf: directory.appendingPathComponent("memory.md"),
+                contentsOf: memoryURL,
                 encoding: .utf8
             )
             let memoryTail = memory.map { Self.tail($0, characterLimit: 4_000) } ?? ""
@@ -331,22 +412,34 @@ final class AutomationModel: ObservableObject {
             let keyChanges = Self.keyChanges(from: memoryTail)
             let nextChanges = Self.nextChanges(from: memoryTail, blocker: blocker, lastNote: lastNote)
             let cwdPaths = Self.arrayValues(values["cwds", default: ""])
+            let projectName = cwdPaths.first.map(Self.projectName(from:)) ?? "Local"
+            let previousRuns = Self.previousRuns(
+                from: memory ?? "",
+                name: values["name", default: directory.lastPathComponent],
+                project: projectName
+            )
+            let rrule = values["rrule", default: ""]
 
             return AutomationItem(
                 id: values["id", default: directory.lastPathComponent],
                 name: values["name", default: directory.lastPathComponent],
                 kind: values["kind", default: "automation"],
                 status: values["status", default: "UNKNOWN"],
-                schedule: Self.scheduleSummary(values["rrule", default: ""]),
+                schedule: Self.scheduleSummary(rrule),
+                rrule: rrule,
                 model: values["model", default: "unknown"],
                 reasoning: values["reasoning_effort", default: "default"],
+                executionEnvironment: values["execution_environment", default: "local"],
+                projectName: projectName,
                 cwdCount: Self.arrayCount(values["cwds", default: ""]),
                 needsApproval: Self.needsApproval(prompt: prompt),
                 blocker: blocker,
                 lastNote: lastNote,
                 keyChanges: keyChanges,
                 nextChanges: nextChanges,
+                previousRuns: previousRuns,
                 automationPath: directory.path,
+                memoryPath: memoryURL.path,
                 workingPath: cwdPaths.first
             )
         }
@@ -596,6 +689,51 @@ final class AutomationModel: ObservableObject {
             }
     }
 
+    private static func projectName(from path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else { return "Local" }
+        return URL(fileURLWithPath: "/" + trimmed).lastPathComponent
+    }
+
+    private static func previousRuns(from memory: String, name: String, project: String) -> [AutomationRunRecord] {
+        let lines = memory
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { line in
+                line.contains("Last run:")
+                || line.hasPrefix("## ")
+                || line.range(of: #"^- \d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil
+                || line.lowercased().contains("run:")
+            }
+
+        var seen: Set<Int> = []
+        let records = lines.compactMap { line -> AutomationRunRecord? in
+            guard let date = dateInLine(line) else { return nil }
+            let key = Int(date.timeIntervalSince1970 / 60)
+            guard !seen.contains(key) else { return nil }
+            seen.insert(key)
+            let lowercased = line.lowercased()
+            let succeeded = !(lowercased.contains("blocked") || lowercased.contains("failed") || lowercased.contains("error"))
+            return AutomationRunRecord(title: name, project: project, date: date, succeeded: succeeded)
+        }
+
+        return Array(records.sorted { $0.date > $1.date }.prefix(4))
+    }
+
+    private static func dateInLine(_ line: String) -> Date? {
+        guard let range = line.range(
+            of: #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?"#,
+            options: .regularExpression
+        ) else { return nil }
+
+        let value = String(line[range])
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = value.count == 19 ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm"
+        return formatter.date(from: value)
+    }
+
     private static func scheduleSummary(_ rrule: String) -> String {
         guard !rrule.isEmpty else { return "No schedule" }
         let parts: [String: String] = Dictionary(uniqueKeysWithValues: rrule.split(separator: ";").compactMap { part -> (String, String)? in
@@ -638,9 +776,10 @@ struct FastReportView: View {
     @ObservedObject var model: AutomationModel
     let onOpenReportWindow: () -> Void
     let onReviewAutomation: (AutomationItem) -> Void
+    @State private var isOpenAppHovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             header
 
             VStack(alignment: .leading, spacing: 3) {
@@ -648,27 +787,47 @@ struct FastReportView: View {
                     FastStatusRow(
                         item: item,
                         onOpen: onOpenReportWindow,
-                        onReview: onOpenReportWindow
+                        onReview: {
+                            onReviewAutomation(item)
+                        }
                     )
                 }
             }
         }
-        .padding(.top, 16)
-        .padding(.horizontal, 18)
-        .padding(.bottom, 14)
-        .frame(width: 340, height: fastPopoverHeight(for: model.items))
+        .padding(.top, 14)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .frame(width: fastPopoverWidth(), height: fastPopoverHeight(for: model.items))
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("Codex Automations")
-                .font(.system(size: 14, weight: .semibold))
-                .lineLimit(1)
-            Text("\(model.activeCount) active · \(updatedText.lowercased())")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Codex Automations")
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                Text("\(model.activeCount) active · \(updatedText.lowercased())")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: onOpenReportWindow) {
+                Text("Open App")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(isOpenAppHovering ? Color.accentColor : Color.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color.primary.opacity(isOpenAppHovering ? 0.055 : 0))
+                    )
+            }
+            .buttonStyle(.plain)
+            .onHover { isOpenAppHovering = $0 }
         }
     }
 
@@ -677,9 +836,13 @@ struct FastReportView: View {
     }
 }
 
+func fastPopoverWidth() -> CGFloat {
+    320
+}
+
 func fastPopoverHeight(for items: [AutomationItem]) -> CGFloat {
     let visibleRows = CGFloat(min(max(items.count, 1), 4))
-    return 76 + visibleRows * 40
+    return 64 + visibleRows * 30
 }
 
 struct FastStatusRow: View {
@@ -699,10 +862,6 @@ struct FastStatusRow: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                        Text(statusLabel(for: item.health))
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
                     }
 
                     Spacer(minLength: 0)
@@ -712,15 +871,11 @@ struct FastStatusRow: View {
 
             if hovering && item.needsApproval {
                 Button(action: onReview) {
-                    Text("Review")
+                    Text("Open in Codex")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(color(for: item.health))
                 }
                 .buttonStyle(.plain)
-            } else {
-                Text(shortStatus(for: item.health))
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(color(for: item.health))
             }
         }
         .padding(.horizontal, 6)
@@ -741,48 +896,34 @@ struct StatusDot: View {
         ZStack {
             if health == .active && !reduceMotion {
                 Circle()
-                    .fill(color(for: health).opacity(pulse ? 0.12 : 0.28))
-                    .frame(width: size * 2.4, height: size * 2.4)
-                    .scaleEffect(pulse ? 1.12 : 0.72)
+                    .fill(color(for: health).opacity(pulse ? 0.10 : 0.22))
+                    .frame(width: size * 2.5, height: size * 2.5)
+                    .scaleEffect(pulse ? 1.08 : 0.78)
             }
 
             Circle()
-                .fill(color(for: health))
+                .strokeBorder(color(for: health).opacity(0.22), lineWidth: 0.7)
+                .background(
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    color(for: health).opacity(0.95),
+                                    color(for: health).opacity(0.72)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
                 .frame(width: size, height: size)
+                .shadow(color: color(for: health).opacity(0.18), radius: 2.5, y: 1)
         }
-        .frame(width: max(size * 2.4, size), height: max(size * 2.4, size))
+        .frame(width: max(size * 2.5, size), height: max(size * 2.5, size))
         .onAppear {
             guard health == .active, !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
                 pulse = true
-            }
-        }
-    }
-}
-
-struct HeartbeatDot: View {
-    let health: AutomationHealth
-    let size: CGFloat
-    @State private var glow = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(color(for: health).opacity(glow ? 0.12 : 0.28), lineWidth: 1)
-                .frame(width: size * 3.1, height: size * 3.1)
-                .scaleEffect(glow ? 1.12 : 0.84)
-                .opacity(health == .paused ? 0 : 1)
-
-            Circle()
-                .fill(color(for: health))
-                .frame(width: size, height: size)
-        }
-        .frame(width: size * 3.1, height: size * 3.1)
-        .onAppear {
-            guard !reduceMotion, health != .paused else { return }
-            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
-                glow = true
             }
         }
     }
@@ -791,11 +932,10 @@ struct HeartbeatDot: View {
 struct ReportWindowView: View {
     @ObservedObject var model: AutomationModel
     let onRefresh: () -> Void
-    let onReviewAutomation: (AutomationItem) -> Void
-    @State private var selectedAutomationID: String?
+    let onOpenCodexAutomation: (AutomationItem) -> Void
 
     private var selectedItem: AutomationItem? {
-        if let selectedAutomationID,
+        if let selectedAutomationID = model.selectedAutomationID,
            let selected = model.items.first(where: { $0.id == selectedAutomationID }) {
             return selected
         }
@@ -806,11 +946,10 @@ struct ReportWindowView: View {
         HSplitView {
             ReportSidebarView(
                 model: model,
-                selectedAutomationID: $selectedAutomationID,
-                onReviewAutomation: onReviewAutomation,
+                onOpenCodexAutomation: onOpenCodexAutomation,
                 onRefresh: onRefresh
             )
-            .frame(minWidth: 170, idealWidth: 230, maxWidth: 320)
+            .frame(minWidth: 180, idealWidth: 210, maxWidth: 280)
 
             ReportDocumentView(
                 model: model,
@@ -823,32 +962,31 @@ struct ReportWindowView: View {
                 model: model,
                 selectedItem: selectedItem
             )
-            .frame(minWidth: 220, idealWidth: 270, maxWidth: 360)
+            .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
         }
-        .frame(minWidth: 820, minHeight: 560)
+        .frame(minWidth: 880, minHeight: 560)
         .onAppear {
-            if selectedAutomationID == nil {
-                selectedAutomationID = model.items.first?.id
+            if model.selectedAutomationID == nil {
+                model.selectedAutomationID = model.items.first?.id
             }
         }
         .onReceive(model.$items) { items in
             guard !items.isEmpty else {
-                selectedAutomationID = nil
+                model.selectedAutomationID = nil
                 return
             }
-            if let selectedAutomationID,
+            if let selectedAutomationID = model.selectedAutomationID,
                items.contains(where: { $0.id == selectedAutomationID }) {
                 return
             }
-            selectedAutomationID = items.first?.id
+            model.selectedAutomationID = items.first?.id
         }
     }
 }
 
 struct ReportSidebarView: View {
     @ObservedObject var model: AutomationModel
-    @Binding var selectedAutomationID: String?
-    let onReviewAutomation: (AutomationItem) -> Void
+    let onOpenCodexAutomation: (AutomationItem) -> Void
     let onRefresh: () -> Void
 
     var body: some View {
@@ -864,15 +1002,15 @@ struct ReportSidebarView: View {
                     ForEach(model.items) { item in
                         SidebarAutomationRow(
                             item: item,
-                            isSelected: selectedAutomationID == item.id,
+                            isSelected: model.selectedAutomationID == item.id,
                             onSelect: {
-                                selectedAutomationID = item.id
+                                model.selectedAutomationID = item.id
                             },
                             onReview: {
-                                selectedAutomationID = item.id
+                                onOpenCodexAutomation(item)
                             },
                             onOpenCodex: {
-                                onReviewAutomation(item)
+                                onOpenCodexAutomation(item)
                             },
                             onOpenFolder: {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: item.workingPath ?? item.automationPath))
@@ -915,49 +1053,44 @@ struct SidebarAutomationRow: View {
     @State private var hovering = false
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 10) {
-                StatusDot(health: item.health, size: 7)
-                    .frame(width: 16)
+        HStack(spacing: 10) {
+            StatusDot(health: item.health, size: 7)
+                .frame(width: 16)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.primary.opacity(0.9))
-                        .lineLimit(1)
-                    Text(statusLabel(for: item.health))
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary.opacity(0.68))
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
-
-                if hovering && item.needsApproval {
-                    Button(action: onReview) {
-                        Text("Review")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(color(for: item.health))
-                    }
-                    .buttonStyle(.plain)
-                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.9))
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(isSelected ? Color.accentColor.opacity(0.028) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.035), lineWidth: 1)
+
+            Spacer(minLength: 0)
+
+            if hovering && item.needsApproval {
+                Button(action: onReview) {
+                    Text("Open in Codex")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(color(for: item.health))
                 }
+                .buttonStyle(.plain)
             }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(isSelected ? Color.accentColor.opacity(0.028) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.035), lineWidth: 1)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
         .onHover { hovering = $0 }
         .contextMenu {
-            Button("Review Changes", action: onReview)
-            Button("Open in Codex", action: onOpenCodex)
+            Button("Open Automations", action: onReview)
+            Button("Open Codex", action: onOpenCodex)
             Button("Open Folder", action: onOpenFolder)
             Divider()
             Button("Refresh", action: onRefresh)
@@ -1022,20 +1155,13 @@ struct LiveStateHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                HeartbeatDot(health: item.health, size: 8)
+                StatusDot(health: item.health, size: 7)
+                    .frame(width: 16, height: 16)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.name)
-                        .font(.system(size: 17, weight: .semibold))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    HStack(spacing: 6) {
-                        Text(liveLine)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(color(for: item.health))
-                    }
-                }
+                Text(item.name)
+                    .font(.system(size: 17, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 0)
             }
@@ -1045,15 +1171,6 @@ struct LiveStateHeader: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private var liveLine: String {
-        switch item.health {
-        case .active: return "Running"
-        case .approval: return "Needs review"
-        case .blocked: return "Needs attention"
-        case .paused: return "Paused"
-        }
     }
 }
 
@@ -1230,31 +1347,237 @@ struct ReportContentsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 30) {
                 if let selectedItem {
-                    Text(compactSchedule(selectedItem.schedule))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary.opacity(0.82))
-                        .lineLimit(1)
-
-                    InspectorList(items: selectedItem.affectedItems, marker: "–")
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(selectedItem.confidenceText)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary.opacity(0.74))
-                        Text(selectedItem.safetyText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary.opacity(0.66))
-                            .lineLimit(2)
-                    }
+                    CodexAutomationInspector(item: selectedItem)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 20)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 28)
         }
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+}
+
+struct CodexAutomationInspector: View {
+    let item: AutomationItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            VStack(alignment: .leading, spacing: 19) {
+                InspectorRow(title: "Status") {
+                    InspectorStatusPill(health: item.health)
+                }
+                InspectorRow(title: "Next run") {
+                    InspectorPillText(item.nextRunDate.map(formatInspectorDate) ?? "No schedule")
+                }
+                InspectorRow(title: "Last ran") {
+                    InspectorPillText(item.lastRunDate.map(formatInspectorDate) ?? "No runs yet")
+                }
+            }
+
+            InspectorGroup(title: "Details") {
+                InspectorRow(title: "Runs in", showsInfo: true) {
+                    InspectorPlainValue(valueTitle(item.executionEnvironment))
+                }
+                InspectorRow(title: "Project") {
+                    InspectorPlainValue(item.projectName)
+                }
+                InspectorRow(title: "Repeats") {
+                    InspectorPlainValue(displaySchedule(item.rrule, fallback: item.schedule))
+                }
+                InspectorRow(title: "Model") {
+                    InspectorPlainValue(displayModel(item.model))
+                }
+                InspectorRow(title: "Reasoning") {
+                    InspectorPlainValue(valueTitle(item.reasoning))
+                }
+            }
+
+            InspectorGroup(title: "Previous runs") {
+                if item.previousRuns.isEmpty {
+                    Text("No previous runs yet")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary.opacity(0.68))
+                } else {
+                    VStack(alignment: .leading, spacing: 15) {
+                        ForEach(item.previousRuns.prefix(3)) { run in
+                            PreviousRunRow(run: run) {
+                                openMemoryFile()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func openMemoryFile() {
+        let memoryURL = URL(fileURLWithPath: item.memoryPath)
+        if FileManager.default.fileExists(atPath: memoryURL.path) {
+            NSWorkspace.shared.open(memoryURL)
+        } else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: item.automationPath))
+        }
+    }
+}
+
+struct InspectorGroup<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.72))
+            content
+        }
+    }
+}
+
+struct InspectorRow<Content: View>: View {
+    let title: String
+    var showsInfo = false
+    let content: Content
+
+    init(title: String, showsInfo: Bool = false, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.showsInfo = showsInfo
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.primary.opacity(0.72))
+                    .lineLimit(1)
+                if showsInfo {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary.opacity(0.55))
+                }
+            }
+            .frame(width: 76, alignment: .leading)
+
+            Spacer(minLength: 12)
+            content
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+}
+
+struct InspectorStatusPill: View {
+    let health: AutomationHealth
+
+    var body: some View {
+        HStack(spacing: 8) {
+            StatusDot(health: health, size: 7)
+                .frame(width: 11, height: 11)
+            Text(statusText(for: health))
+                .font(.system(size: 13, weight: .regular))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .foregroundStyle(.secondary.opacity(0.86))
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(Color(nsColor: .controlColor).opacity(0.42))
+        )
+    }
+}
+
+struct InspectorPillText: View {
+    let value: String
+
+    init(_ value: String) {
+        self.value = value
+    }
+
+    var body: some View {
+        Text(value)
+            .font(.system(size: 13, weight: .regular))
+            .foregroundStyle(.secondary.opacity(0.86))
+            .lineLimit(1)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(Color(nsColor: .controlColor).opacity(0.36))
+            )
+    }
+}
+
+struct InspectorPlainValue: View {
+    let value: String
+
+    init(_ value: String) {
+        self.value = value
+    }
+
+    var body: some View {
+        Text(value)
+            .font(.system(size: 13, weight: .regular))
+            .foregroundStyle(.primary.opacity(0.74))
+            .lineLimit(1)
+    }
+}
+
+struct PreviousRunRow: View {
+    let run: AutomationRunRecord
+    let onOpen: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 10) {
+                Image(systemName: run.succeeded ? "checkmark.circle.fill" : "circle.fill")
+                    .font(.system(size: run.succeeded ? 11 : 8, weight: .medium))
+                    .foregroundStyle(run.succeeded ? Color.secondary.opacity(0.8) : Color(nsColor: .systemRed).opacity(0.62))
+                    .frame(width: 15)
+
+                Text(run.title)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(run.succeeded ? Color.primary.opacity(0.82) : Color.secondary.opacity(0.62))
+                    .lineLimit(1)
+
+                Text(run.project)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.secondary.opacity(0.66))
+                    .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                Text(relativeRunAge(run.date))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(.secondary.opacity(0.68))
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(isHovering ? 0.58 : 0))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color(nsColor: .controlColor).opacity(isHovering ? 0.34 : 0))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help("Open run memory")
     }
 }
 
@@ -1263,6 +1586,84 @@ func compactSchedule(_ schedule: String) -> String {
         .replacingOccurrences(of: "Weekly ", with: "Weekly · ")
         .replacingOccurrences(of: "Daily at ", with: "Daily · ")
         .replacingOccurrences(of: " at ", with: " ")
+}
+
+func statusText(for health: AutomationHealth) -> String {
+    switch health {
+    case .active: return "Active"
+    case .approval: return "Needs Review"
+    case .blocked: return "Attention"
+    case .paused: return "Paused"
+    }
+}
+
+func displayModel(_ model: String) -> String {
+    model
+        .replacingOccurrences(of: "gpt", with: "GPT")
+        .replacingOccurrences(of: "unknown", with: "Unknown")
+}
+
+func valueTitle(_ value: String) -> String {
+    guard !value.isEmpty else { return "Unknown" }
+    return value
+        .split(separator: "_")
+        .map { word in
+            word.prefix(1).uppercased() + word.dropFirst().lowercased()
+        }
+        .joined(separator: " ")
+}
+
+func displaySchedule(_ rrule: String, fallback: String) -> String {
+    guard let next = ScheduleRule(rrule: rrule).nextRun() else { return fallback }
+    let calendar = Calendar.current
+    let timeFormatter = DateFormatter()
+    timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+    timeFormatter.dateFormat = "h:mm a"
+
+    if rrule.contains("FREQ=DAILY") {
+        return "Daily at \(timeFormatter.string(from: next))"
+    }
+
+    if rrule.contains("FREQ=WEEKLY") {
+        let weekday = calendar.shortWeekdaySymbols[calendar.component(.weekday, from: next) - 1]
+        return "\(weekday) at \(timeFormatter.string(from: next))"
+    }
+
+    return fallback
+}
+
+func formatInspectorDate(_ date: Date) -> String {
+    let calendar = Calendar.current
+    let timeFormatter = DateFormatter()
+    timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+    timeFormatter.dateFormat = "h:mm a"
+    let time = timeFormatter.string(from: date)
+
+    if calendar.isDateInToday(date) {
+        return "Today at \(time)"
+    }
+    if calendar.isDateInTomorrow(date) {
+        return "Tomorrow at \(time)"
+    }
+    if calendar.isDateInYesterday(date) {
+        return "Yesterday at \(time)"
+    }
+
+    let dayFormatter = DateFormatter()
+    dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+    dayFormatter.dateFormat = "MMM d"
+    return "\(dayFormatter.string(from: date)) at \(time)"
+}
+
+func relativeRunAge(_ date: Date) -> String {
+    let seconds = max(0, Date().timeIntervalSince(date))
+    if seconds < 60 * 60 {
+        return "\(max(1, Int(seconds / 60)))m"
+    }
+    if seconds < 60 * 60 * 24 {
+        return "\(Int(seconds / 3600))h"
+    }
+    return "\(Int(seconds / 86400))d"
 }
 
 struct InspectorSection<Content: View>: View {
@@ -1416,7 +1817,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.showReportWindow()
                 },
                 onReviewAutomation: { [weak self] item in
-                    self?.reviewAutomation(item)
+                    self?.reviewAutomationInCodex(item)
                 }
             )
         )
@@ -1460,8 +1861,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addMenuItem("Open Control Window", systemSymbol: "macwindow", action: #selector(openWindowFromMenu), to: menu)
 
         let reviewItem = addMenuItem(
-            "Review Next Approval",
-            systemSymbol: "checkmark.seal",
+            "Open Automations",
+            systemSymbol: "clock.arrow.circlepath",
             action: #selector(reviewNextApprovalFromMenu),
             to: menu
         )
@@ -1504,15 +1905,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func fastPopoverSize() -> NSSize {
-        NSSize(width: 340, height: fastPopoverHeight(for: model.items))
+        NSSize(width: fastPopoverWidth(), height: fastPopoverHeight(for: model.items))
     }
 
     private func openCodex() {
         openCodex(at: model.rootURL.path)
     }
 
-    private func reviewAutomation(_ item: AutomationItem) {
-        openCodex(at: item.workingPath ?? item.automationPath)
+    private func reviewAutomationInCodex(_ item: AutomationItem) {
+        openCodexAutomation(item)
+    }
+
+    private func openAutomationInCodex(_ item: AutomationItem) {
+        openCodexAutomation(item)
     }
 
     @objc private func openCodexFromMenu() {
@@ -1524,7 +1929,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func reviewNextApprovalFromMenu() {
-        showReportWindow()
+        guard let item = model.needsAttentionItems.first else {
+            showReportWindow()
+            return
+        }
+        reviewAutomationInCodex(item)
     }
 
     @objc private func refreshFromMenu() {
@@ -1545,8 +1954,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
-    private func showReportWindow() {
+    private func showReportWindow(selecting automationID: String? = nil) {
         model.refresh()
+        if let automationID {
+            model.selectedAutomationID = automationID
+        } else if model.selectedAutomationID == nil {
+            model.selectedAutomationID = model.items.first?.id
+        }
         updateIcon()
         popover.performClose(nil)
 
@@ -1574,8 +1988,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.updateIcon()
                     self?.updateReportWindowTitle()
                 },
-                onReviewAutomation: { [weak self] item in
-                    self?.reviewAutomation(item)
+                onOpenCodexAutomation: { [weak self] item in
+                    self?.openAutomationInCodex(item)
                 }
             )
         )
@@ -1604,6 +2018,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    private func openCodexAutomation(_: AutomationItem) {
+        var components = URLComponents()
+        components.scheme = "codex"
+        components.host = "automations"
+
+        guard let url = components.url else {
+            openCodex()
+            return
+        }
+
+        NSWorkspace.shared.open(url)
     }
 
     private func makeStatusIcon(for health: AutomationHealth) -> NSImage {
