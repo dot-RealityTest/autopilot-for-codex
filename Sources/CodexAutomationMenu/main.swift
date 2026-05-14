@@ -1,10 +1,12 @@
 import AppKit
 import ServiceManagement
 import SwiftUI
+import UserNotifications
 
 extension Notification.Name {
     static let toggleAutomationSidebar = Notification.Name("toggleAutomationSidebar")
     static let toggleAutomationInspector = Notification.Name("toggleAutomationInspector")
+    static let automationWindowLayoutChanged = Notification.Name("automationWindowLayoutChanged")
 }
 
 enum AutomationHealth: String {
@@ -780,8 +782,10 @@ final class AutomationModel: ObservableObject {
 
 struct FastReportView: View {
     @ObservedObject var model: AutomationModel
+    @ObservedObject var connection: CodexConnection
     let onOpenReportWindow: () -> Void
     let onOpenAutomationWindow: (AutomationItem) -> Void
+    let onConnectCodex: () -> Void
     @State private var isOpenAppHovering = false
 
     var body: some View {
@@ -812,9 +816,12 @@ struct FastReportView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Codex Automations")
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .lineLimit(1)
+                HStack(spacing: 7) {
+                    Text("Codex Automations")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .lineLimit(1)
+                    CodexConnectionBadge(connection: connection)
+                }
                 Text("\(model.activeCount) active · \(updatedText.lowercased())")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
@@ -823,10 +830,10 @@ struct FastReportView: View {
 
             Spacer(minLength: 6)
 
-            Button(action: onOpenReportWindow) {
-                Text("Open App")
+            Button(action: connection.isConnected ? onOpenReportWindow : onConnectCodex) {
+                Text(connection.isConnected ? "Open App" : "Connect")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(isOpenAppHovering ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isOpenAppHovering ? Color.accentColor : connection.isConnected ? Color.secondary : Color.accentColor)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
                     .background(
@@ -852,6 +859,61 @@ func fastPopoverWidth() -> CGFloat {
 func fastPopoverHeight(for items: [AutomationItem]) -> CGFloat {
     let visibleRows = CGFloat(min(max(items.count, 1), 4))
     return 56 + visibleRows * 27
+}
+
+struct ReportWindowLayoutMetrics {
+    let minSize: NSSize
+    let preferredSize: NSSize
+}
+
+func reportWindowLayoutMetrics(
+    showsSidebar: Bool,
+    showsInspector: Bool,
+    itemCount: Int
+) -> ReportWindowLayoutMetrics {
+    let sidebarMin: CGFloat = showsSidebar ? 180 : 0
+    let sidebarPreferred: CGFloat = showsSidebar ? 210 : 0
+    let documentMin: CGFloat = showsInspector ? 420 : 380
+    let documentPreferred: CGFloat = showsInspector ? 500 : 520
+    let inspectorMin: CGFloat = showsInspector ? 250 : 0
+    let inspectorPreferred: CGFloat = showsInspector ? 290 : 0
+    let visibleRows = CGFloat(min(max(itemCount, 1), 6))
+    let preferredHeight = min(max(440, 378 + visibleRows * 22), 540)
+
+    return ReportWindowLayoutMetrics(
+        minSize: NSSize(
+            width: max(520, sidebarMin + documentMin + inspectorMin),
+            height: 390
+        ),
+        preferredSize: NSSize(
+            width: max(600, sidebarPreferred + documentPreferred + inspectorPreferred),
+            height: preferredHeight
+        )
+    )
+}
+
+struct CodexConnectionBadge: View {
+    @ObservedObject var connection: CodexConnection
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(connection.statusColor)
+                .frame(width: 5.5, height: 5.5)
+                .shadow(color: connection.statusColor.opacity(connection.isConnected ? 0.24 : 0.08), radius: 2, y: 0.5)
+            Text(connection.shortStatusText)
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.78))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2.5)
+        .background(
+            Capsule()
+                .fill(Color.primary.opacity(0.045))
+        )
+        .accessibilityLabel("Codex \(connection.statusText)")
+    }
 }
 
 struct FastStatusRow: View {
@@ -953,6 +1015,14 @@ struct ReportWindowView: View {
         return model.items.first
     }
 
+    private var minimumWindowWidth: CGFloat {
+        reportWindowLayoutMetrics(
+            showsSidebar: showsSidebar,
+            showsInspector: showsInspector,
+            itemCount: model.items.count
+        ).minSize.width
+    }
+
     var body: some View {
         HSplitView {
             if showsSidebar {
@@ -968,7 +1038,7 @@ struct ReportWindowView: View {
                 model: model,
                 selectedItem: selectedItem
             )
-            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: showsInspector ? 420 : 380, maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(1)
 
             if showsInspector {
@@ -979,11 +1049,12 @@ struct ReportWindowView: View {
                 .frame(minWidth: 250, idealWidth: 290, maxWidth: 340)
             }
         }
-        .frame(minWidth: 820, minHeight: 430)
+        .frame(minWidth: minimumWindowWidth, minHeight: 390)
         .onAppear {
             if model.selectedAutomationID == nil {
                 model.selectedAutomationID = model.items.first?.id
             }
+            publishWindowLayout()
         }
         .onReceive(model.$items) { items in
             guard !items.isEmpty else {
@@ -1000,11 +1071,26 @@ struct ReportWindowView: View {
             withAnimation(.easeInOut(duration: 0.16)) {
                 showsSidebar.toggle()
             }
+            publishWindowLayout()
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleAutomationInspector)) { _ in
             withAnimation(.easeInOut(duration: 0.16)) {
                 showsInspector.toggle()
             }
+            publishWindowLayout()
+        }
+    }
+
+    private func publishWindowLayout() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .automationWindowLayoutChanged,
+                object: nil,
+                userInfo: [
+                    "showsSidebar": showsSidebar,
+                    "showsInspector": showsInspector
+                ]
+            )
         }
     }
 }
@@ -1856,6 +1942,8 @@ final class AppSettings: ObservableObject {
     @Published private(set) var launchAtLoginEnabled: Bool
     @Published private(set) var backgroundStopped: Bool
     @Published private(set) var launchAtLoginError: String?
+    @Published private(set) var notificationStatusText: String = "Checking..."
+    @Published private(set) var notificationTestMessage: String?
 
     private let defaults = UserDefaults.standard
 
@@ -1872,11 +1960,31 @@ final class AppSettings: ObservableObject {
         } else {
             launchAtLoginEnabled = false
         }
+
+        refreshNotificationAuthorization()
     }
 
     func setNotificationsEnabled(_ enabled: Bool) {
-        notificationsEnabled = enabled
-        defaults.set(enabled, forKey: Keys.notificationsEnabled)
+        notificationTestMessage = nil
+
+        guard enabled else {
+            notificationsEnabled = false
+            notificationStatusText = "Off"
+            defaults.set(false, forKey: Keys.notificationsEnabled)
+            return
+        }
+
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            DispatchQueue.main.async {
+                self?.notificationsEnabled = granted
+                self?.defaults.set(granted, forKey: Keys.notificationsEnabled)
+                if granted {
+                    self?.notificationStatusText = "Allowed"
+                } else {
+                    self?.notificationStatusText = error == nil ? "Permission needed" : "Unavailable"
+                }
+            }
+        }
     }
 
     func setBackgroundStopped(_ stopped: Bool) {
@@ -1905,96 +2013,358 @@ final class AppSettings: ObservableObject {
             launchAtLoginError = "Could not update Login Items."
         }
     }
+
+    func refreshNotificationAuthorization() {
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] notificationSettings in
+            DispatchQueue.main.async {
+                switch notificationSettings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral:
+                    self?.notificationStatusText = "Allowed"
+                case .denied:
+                    self?.notificationStatusText = "Denied in System Settings"
+                    self?.notificationsEnabled = false
+                    self?.defaults.set(false, forKey: Keys.notificationsEnabled)
+                case .notDetermined:
+                    let wasRequested = self?.notificationsEnabled == true
+                    self?.notificationsEnabled = false
+                    self?.notificationStatusText = wasRequested ? "Permission needed" : "Off"
+                @unknown default:
+                    self?.notificationStatusText = "Unknown"
+                }
+            }
+        }
+    }
+
+    func sendTestNotification() {
+        notificationTestMessage = nil
+
+        let send: () -> Void = { [weak self] in
+            let content = UNMutableNotificationContent()
+            content.title = "Codex Automations"
+            content.body = "Notifications are working."
+            content.sound = .default
+
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            let request = UNNotificationRequest(
+                identifier: "codex-automation-test-\(UUID().uuidString)",
+                content: content,
+                trigger: trigger
+            )
+
+            UNUserNotificationCenter.current().add(request) { error in
+                DispatchQueue.main.async {
+                    if let error {
+                        self?.notificationTestMessage = "Could not send: \(error.localizedDescription)"
+                    } else {
+                        self?.notificationTestMessage = "Test notification sent."
+                    }
+                }
+            }
+        }
+
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] notificationSettings in
+            switch notificationSettings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                DispatchQueue.main.async {
+                    self?.notificationsEnabled = true
+                    self?.defaults.set(true, forKey: Keys.notificationsEnabled)
+                    self?.notificationStatusText = "Allowed"
+                }
+                send()
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+                    DispatchQueue.main.async {
+                        self?.notificationsEnabled = granted
+                        self?.defaults.set(granted, forKey: Keys.notificationsEnabled)
+                        if granted {
+                            self?.notificationStatusText = "Allowed"
+                            send()
+                        } else {
+                            self?.notificationStatusText = error == nil ? "Permission needed" : "Unavailable"
+                            self?.notificationTestMessage = "Notification permission was not granted."
+                        }
+                    }
+                }
+            default:
+                DispatchQueue.main.async {
+                    self?.notificationsEnabled = false
+                    self?.notificationStatusText = "Denied in System Settings"
+                    self?.notificationTestMessage = "Allow notifications in System Settings first."
+                }
+            }
+        }
+    }
+}
+
+final class CodexConnection: ObservableObject {
+    private static let bundleIdentifier = "com.openai.codex"
+    private static let appURL = URL(fileURLWithPath: "/Applications/Codex.app")
+    private static let cliURL = URL(fileURLWithPath: "/opt/homebrew/bin/codex")
+
+    @Published private(set) var isInstalled = false
+    @Published private(set) var isRunning = false
+
+    var isConnected: Bool {
+        isRunning
+    }
+
+    var shortStatusText: String {
+        if isRunning { return "Codex" }
+        if isInstalled { return "Offline" }
+        return "Missing"
+    }
+
+    var statusText: String {
+        if isRunning { return "Connected" }
+        if isInstalled { return "Not connected" }
+        return "Codex not found"
+    }
+
+    var helpText: String {
+        if isRunning { return "Codex is running." }
+        if isInstalled { return "Open Codex to connect." }
+        return "Install Codex or add the Codex CLI."
+    }
+
+    var statusColor: Color {
+        if isRunning { return Color(nsColor: .systemGreen) }
+        if isInstalled { return Color(nsColor: .systemOrange) }
+        return Color(nsColor: .systemGray)
+    }
+
+    init() {
+        refresh()
+    }
+
+    func refresh() {
+        isInstalled = FileManager.default.fileExists(atPath: Self.appURL.path)
+            || FileManager.default.fileExists(atPath: Self.cliURL.path)
+        isRunning = NSWorkspace.shared.runningApplications.contains { app in
+            app.bundleIdentifier == Self.bundleIdentifier
+                || app.bundleURL == Self.appURL
+                || app.localizedName == "Codex"
+        }
+    }
+
+    func connect() {
+        guard Self.launchCodex() else {
+            refresh()
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.refresh()
+        }
+    }
+
+    @discardableResult
+    static func launchCodex() -> Bool {
+        if FileManager.default.fileExists(atPath: appURL.path) {
+            NSWorkspace.shared.openApplication(
+                at: appURL,
+                configuration: NSWorkspace.OpenConfiguration()
+            )
+            return true
+        }
+
+        if FileManager.default.fileExists(atPath: cliURL.path) {
+            let process = Process()
+            process.executableURL = cliURL
+            process.arguments = ["app"]
+            try? process.run()
+            return true
+        }
+
+        return false
+    }
 }
 
 struct SettingsWindowView: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var connection: CodexConnection
     let onStop: () -> Void
     let onResume: () -> Void
+    let onConnectCodex: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Settings")
-                    .font(.system(size: 20, weight: .semibold))
-                Text("Quiet controls for background automation.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                SettingsToggleRow(
-                    title: "Notifications",
-                    subtitle: "Allow Codex Automations to surface status changes.",
-                    isOn: Binding(
-                        get: { settings.notificationsEnabled },
-                        set: { settings.setNotificationsEnabled($0) }
-                    )
-                )
-
-                SettingsToggleRow(
-                    title: "Open at Login",
-                    subtitle: "Start this menu bar utility when you sign in.",
-                    isOn: Binding(
-                        get: { settings.launchAtLoginEnabled },
-                        set: { settings.setLaunchAtLoginEnabled($0) }
-                    )
-                )
-
-                if let launchAtLoginError = settings.launchAtLoginError {
-                    Text(launchAtLoginError)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Codex Automations")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Background controls and shortcuts.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
-            }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Background")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsConnectionRow(
+                        connection: connection,
+                        onConnectCodex: onConnectCodex
+                    )
 
-                HStack(spacing: 12) {
-                    StatusDot(health: settings.backgroundStopped ? .paused : .active, size: 7)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(settings.backgroundStopped ? "Stopped" : "Running")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text(settings.backgroundStopped ? "No background refresh is running." : "Refreshes quietly in the menu bar.")
-                            .font(.system(size: 11))
+                    SettingsNotificationRow(settings: settings)
+
+                    SettingsToggleRow(
+                        title: "Open at Login",
+                        subtitle: "Start from the menu bar when you sign in.",
+                        isOn: Binding(
+                            get: { settings.launchAtLoginEnabled },
+                            set: { settings.setLaunchAtLoginEnabled($0) }
+                        )
+                    )
+
+                    if let launchAtLoginError = settings.launchAtLoginError {
+                        Text(launchAtLoginError)
+                            .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    Button(settings.backgroundStopped ? "Resume" : "Stop") {
-                        if settings.backgroundStopped {
-                            onResume()
-                        } else {
-                            onStop()
+                }
+
+                VStack(alignment: .leading, spacing: 9) {
+                    SettingsSectionLabel("Background")
+
+                    HStack(spacing: 11) {
+                        StatusDot(health: settings.backgroundStopped ? .paused : .active, size: 7)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(settings.backgroundStopped ? "Stopped" : "Running")
+                                .font(.system(size: 12.5, weight: .semibold))
+                            Text(settings.backgroundStopped ? "No background refresh." : "Refreshes quietly in the menu bar.")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
                         }
+                        Spacer()
+                        Button(settings.backgroundStopped ? "Resume" : "Stop") {
+                            if settings.backgroundStopped {
+                                onResume()
+                            } else {
+                                onStop()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                }
+
+                VStack(alignment: .leading, spacing: 9) {
+                    SettingsSectionLabel("Keyboard")
+
+                    LazyVGrid(columns: [
+                        GridItem(.flexible(), spacing: 14),
+                        GridItem(.flexible(), spacing: 14)
+                    ], alignment: .leading, spacing: 7) {
+                        ShortcutRow(keys: "⌘,", action: "Settings")
+                        ShortcutRow(keys: "⌘R", action: "Refresh")
+                        ShortcutRow(keys: "⌘S", action: "Stop / Resume")
+                        ShortcutRow(keys: "⌘B", action: "Sidebar")
+                        ShortcutRow(keys: "⌘I", action: "Inspector")
+                        ShortcutRow(keys: "⌘O", action: "Control window")
+                    }
                 }
             }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Keyboard")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                VStack(spacing: 7) {
-                    ShortcutRow(keys: "⌘,", action: "Settings")
-                    ShortcutRow(keys: "⌘R", action: "Refresh")
-                    ShortcutRow(keys: "⌘S", action: "Stop / Resume")
-                    ShortcutRow(keys: "⌘B", action: "Sidebar")
-                    ShortcutRow(keys: "⌘I", action: "Inspector")
-                    ShortcutRow(keys: "⌘O", action: "Control window")
-                }
-            }
-
-            Spacer(minLength: 0)
+            .padding(.top, 18)
+            .padding(.horizontal, 26)
+            .padding(.bottom, 24)
         }
-        .padding(26)
-        .frame(width: 430, height: 440)
+        .frame(width: 520, height: 430)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+struct SettingsNotificationRow: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 7) {
+                        Text("Notifications")
+                            .font(.system(size: 12.5, weight: .semibold))
+                        Text(settings.notificationStatusText)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary.opacity(0.84))
+                    }
+                    Text("Status changes and completion nudges.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button("Test") {
+                    settings.sendTestNotification()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!settings.notificationsEnabled && settings.notificationStatusText == "Denied in System Settings")
+
+                Toggle("", isOn: Binding(
+                    get: { settings.notificationsEnabled },
+                    set: { settings.setNotificationsEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+
+            if let notificationTestMessage = settings.notificationTestMessage {
+                Text(notificationTestMessage)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 1)
+            }
+        }
+    }
+}
+
+struct SettingsConnectionRow: View {
+    @ObservedObject var connection: CodexConnection
+    let onConnectCodex: () -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 7) {
+                    Text("Codex")
+                        .font(.system(size: 12.5, weight: .semibold))
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(connection.statusColor)
+                            .frame(width: 6, height: 6)
+                        Text(connection.statusText)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary.opacity(0.84))
+                    }
+                }
+                Text(connection.helpText)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button(connection.isConnected ? "Open" : "Connect") {
+                onConnectCodex()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!connection.isInstalled)
+        }
+    }
+}
+
+struct SettingsSectionLabel: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -2007,9 +2377,9 @@ struct SettingsToggleRow: View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12.5, weight: .semibold))
                 Text(subtitle)
-                    .font(.system(size: 11))
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -2045,6 +2415,7 @@ struct ShortcutRow: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = AutomationModel()
     private let settings = AppSettings()
+    private let connection = CodexConnection()
     private let popover = NSPopover()
     private var statusItem: NSStatusItem?
     private var reportWindow: NSWindow?
@@ -2055,6 +2426,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         installApplicationMenu()
         model.refresh()
+        connection.refresh()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceApplicationStateChanged),
+            name: NSWorkspace.didLaunchApplicationNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceApplicationStateChanged),
+            name: NSWorkspace.didTerminateApplicationNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(reportWindowLayoutChanged(_:)),
+            name: .automationWindowLayoutChanged,
+            object: nil
+        )
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         self.statusItem = statusItem
@@ -2073,11 +2463,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(
             rootView: FastReportView(
                 model: model,
+                connection: connection,
                 onOpenReportWindow: { [weak self] in
                     self?.showReportWindow()
                 },
                 onOpenAutomationWindow: { [weak self] item in
                     self?.showReportWindow(selecting: item.id)
+                },
+                onConnectCodex: { [weak self] in
+                    self?.connectCodex()
                 }
             )
         )
@@ -2096,6 +2490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(sender)
         } else {
             model.refresh()
+            connection.refresh()
             updateIcon()
             updateReportWindowTitle()
             popover.contentSize = fastPopoverSize()
@@ -2106,6 +2501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showStatusMenu(from sender: NSStatusBarButton) {
         model.refresh()
+        connection.refresh()
         updateIcon()
         updateReportWindowTitle()
         popover.performClose(nil)
@@ -2113,7 +2509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        addMenuItem("Open Codex", systemSymbol: "arrow.up.forward.app", action: #selector(openCodexFromMenu), to: menu)
+        addMenuItem(connection.isConnected ? "Open Codex" : "Connect Codex", systemSymbol: "arrow.up.forward.app", action: #selector(openCodexFromMenu), to: menu)
         addMenuItem("Open Control Window", systemSymbol: "macwindow", action: #selector(openWindowFromMenu), to: menu)
 
         menu.addItem(.separator())
@@ -2189,6 +2585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = nil
 
         guard !settings.backgroundStopped else {
+            connection.refresh()
             updateIcon()
             updateReportWindowTitle()
             return
@@ -2196,6 +2593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.model.refresh()
+            self?.connection.refresh()
             self?.updateIcon()
             self?.updateReportWindowTitle()
         }
@@ -2221,8 +2619,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSSize(width: fastPopoverWidth(), height: fastPopoverHeight(for: model.items))
     }
 
+    @objc private func workspaceApplicationStateChanged() {
+        connection.refresh()
+    }
+
+    @objc private func reportWindowLayoutChanged(_ notification: Notification) {
+        let showsSidebar = notification.userInfo?["showsSidebar"] as? Bool ?? true
+        let showsInspector = notification.userInfo?["showsInspector"] as? Bool ?? true
+        applyReportWindowLayout(showsSidebar: showsSidebar, showsInspector: showsInspector)
+    }
+
     private func openCodex() {
-        openCodexApp()
+        connectCodex()
+    }
+
+    private func connectCodex() {
+        connection.connect()
     }
 
     private func reviewAutomationInCodex(_ item: AutomationItem) {
@@ -2243,6 +2655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func refreshFromMenu() {
         model.refresh()
+        connection.refresh()
         updateIcon()
         updateReportWindowTitle()
     }
@@ -2294,6 +2707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettingsWindow() {
         popover.performClose(nil)
+        connection.refresh()
 
         if let settingsWindow {
             settingsWindow.makeKeyAndOrderFront(nil)
@@ -2302,17 +2716,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 430, height: 440),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 430),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Settings"
+        window.minSize = NSSize(width: 500, height: 390)
         window.center()
         window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(
             rootView: SettingsWindowView(
                 settings: settings,
+                connection: connection,
                 onStop: { [weak self] in
                     self?.setBackgroundStopped(true)
                 },
@@ -2321,6 +2737,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.model.refresh()
                     self?.updateIcon()
                     self?.updateReportWindowTitle()
+                },
+                onConnectCodex: { [weak self] in
+                    self?.connectCodex()
                 }
             )
         )
@@ -2342,7 +2761,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let reportWindow {
             updateReportWindowTitle()
             if !reportWindow.isVisible {
-                reportWindow.setContentSize(reportWindowPreferredSize())
+                let layoutMetrics = reportWindowLayoutMetrics(
+                    showsSidebar: true,
+                    showsInspector: true,
+                    itemCount: model.items.count
+                )
+                reportWindow.minSize = layoutMetrics.minSize
+                reportWindow.setContentSize(layoutMetrics.preferredSize)
                 reportWindow.center()
             }
             reportWindow.makeKeyAndOrderFront(nil)
@@ -2350,14 +2775,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let preferredSize = reportWindowPreferredSize()
+        let layoutMetrics = reportWindowLayoutMetrics(
+            showsSidebar: true,
+            showsInspector: true,
+            itemCount: model.items.count
+        )
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: preferredSize.width, height: preferredSize.height),
+            contentRect: NSRect(x: 0, y: 0, width: layoutMetrics.preferredSize.width, height: layoutMetrics.preferredSize.height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.minSize = NSSize(width: 820, height: 430)
+        window.minSize = layoutMetrics.minSize
         window.title = "Codex Automations · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
         window.center()
         window.isReleasedWhenClosed = false
@@ -2379,30 +2808,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func reportWindowPreferredSize() -> NSSize {
-        let visibleRows = min(max(model.items.count, 1), 6)
-        let height = min(max(472, 402 + visibleRows * 22), 560)
-        return NSSize(width: 960, height: CGFloat(height))
+    private func applyReportWindowLayout(showsSidebar: Bool, showsInspector: Bool) {
+        guard let reportWindow else { return }
+        let layoutMetrics = reportWindowLayoutMetrics(
+            showsSidebar: showsSidebar,
+            showsInspector: showsInspector,
+            itemCount: model.items.count
+        )
+        reportWindow.minSize = layoutMetrics.minSize
+
+        let currentSize = reportWindow.contentLayoutRect.size
+        var targetSize = currentSize
+
+        if currentSize.width > layoutMetrics.preferredSize.width + 44 || currentSize.width < layoutMetrics.minSize.width {
+            targetSize.width = layoutMetrics.preferredSize.width
+        }
+
+        if currentSize.height < layoutMetrics.minSize.height {
+            targetSize.height = layoutMetrics.minSize.height
+        } else if currentSize.height > layoutMetrics.preferredSize.height + 88 {
+            targetSize.height = layoutMetrics.preferredSize.height
+        }
+
+        if abs(targetSize.width - currentSize.width) > 1 || abs(targetSize.height - currentSize.height) > 1 {
+            reportWindow.setContentSize(targetSize)
+        }
     }
 
     private func openCodexApp() {
-        let codexURL = URL(fileURLWithPath: "/Applications/Codex.app")
-        if FileManager.default.fileExists(atPath: codexURL.path) {
-            NSWorkspace.shared.openApplication(
-                at: codexURL,
-                configuration: NSWorkspace.OpenConfiguration()
-            )
-            return
-        }
-
-        let codexCLI = URL(fileURLWithPath: "/opt/homebrew/bin/codex")
-        if FileManager.default.fileExists(atPath: codexCLI.path) {
-            let process = Process()
-            process.executableURL = codexCLI
-            process.arguments = ["app"]
-            try? process.run()
-            return
-        }
+        connectCodex()
     }
 
     private func openCodexAutomation(_: AutomationItem) {
