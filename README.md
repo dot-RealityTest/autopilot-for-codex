@@ -12,16 +12,6 @@ Autopilot for Codex stays in the menu bar, watches local Codex automation files,
   <img src="Resources/AppIcon.png" alt="Autopilot for Codex icon" width="128">
 </p>
 
-## Screenshots
-
-<p align="center">
-  <img src="docs/images/menu-popover.png" alt="Autopilot for Codex menu bar popover" width="520">
-</p>
-
-<p align="center">
-  <img src="docs/images/control-window.png" alt="Autopilot for Codex control window" width="900">
-</p>
-
 ## Download
 
 Download the latest notarized DMG from [GitHub Releases](https://github.com/dot-RealityTest/autopilot-for-codex/releases/latest).
@@ -36,6 +26,12 @@ Open the DMG, drag **Autopilot for Codex** into Applications, then launch it fro
 - Shows proposed changes, permissions, schedule, and recent runs.
 - Opens Codex when you need to review or continue automation work.
 - Supports notifications, launch at login, background stop/resume, and keyboard shortcuts.
+
+## App Preview
+
+<p align="center">
+  <img src="docs/images/control-window.png" alt="Autopilot for Codex control window" width="900">
+</p>
 
 ## Status Colors
 
