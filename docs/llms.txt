@@ -1,0 +1,39 @@
+# Autopilot for Codex
+
+Autopilot for Codex is a native macOS menu bar app for monitoring and controlling local Codex automations.
+
+## Summary
+
+The app reads local Codex automation files from `~/.codex/automations`, shows automation status in the macOS menu bar, and gives developers a quiet control surface for review, approval, and operational visibility.
+
+## Primary Audience
+
+Developers and power users running OpenAI Codex automations on macOS.
+
+## Key Features
+
+- macOS menu bar status for local Codex automations.
+- Compact control window for automation review.
+- Approval-focused view with proposed changes and permissions.
+- Local-first data handling.
+- Notifications, launch at login, background stop/resume, and keyboard shortcuts.
+- Signed, notarized Developer ID DMG release.
+
+## Install
+
+Download the latest DMG from:
+https://github.com/dot-RealityTest/autopilot-for-codex/releases/latest
+
+## Repository
+
+https://github.com/dot-RealityTest/autopilot-for-codex
+
+## Documentation
+
+- README: https://github.com/dot-RealityTest/autopilot-for-codex#readme
+- Overview: docs/overview.md
+- Distribution: DISTRIBUTION.md
+
+## Keywords
+
+macOS menu bar app, Codex automation, OpenAI Codex, local-first developer tool, SwiftUI app, AppKit status bar utility, automation approval flow, autonomous workflow control.

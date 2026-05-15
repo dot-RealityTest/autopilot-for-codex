@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autopilot for Codex - macOS Menu Bar App for Codex Automations</title>
+  <meta name="description" content="A notarized macOS menu bar app for monitoring local Codex automations, reviewing proposed changes, and keeping autonomous workflows calm and visible.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://dot-realitytest.github.io/autopilot-for-codex/">
+  <link rel="icon" href="images/app-icon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Autopilot for Codex">
+  <meta property="og:description" content="Native macOS menu bar app for local Codex automation status, approvals, and workflow visibility.">
+  <meta property="og:url" content="https://dot-realitytest.github.io/autopilot-for-codex/">
+  <meta property="og:image" content="https://dot-realitytest.github.io/autopilot-for-codex/images/control-window.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Autopilot for Codex">
+  <meta name="twitter:description" content="A calm macOS control surface for local Codex automations.">
+  <meta name="twitter:image" content="https://dot-realitytest.github.io/autopilot-for-codex/images/control-window.png">
+  <link rel="alternate" type="text/plain" href="https://dot-realitytest.github.io/autopilot-for-codex/llms.txt" title="llms.txt">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Autopilot for Codex",
+    "operatingSystem": "macOS 13+",
+    "applicationCategory": "DeveloperApplication",
+    "description": "A notarized macOS menu bar app for monitoring and controlling local Codex automations.",
+    "downloadUrl": "https://github.com/dot-RealityTest/autopilot-for-codex/releases/latest",
+    "codeRepository": "https://github.com/dot-RealityTest/autopilot-for-codex",
+    "softwareVersion": "0.1.0"
+  }
+  </script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f7;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --line: rgba(0, 0, 0, 0.08);
+      --panel: rgba(255, 255, 255, 0.72);
+      --accent: #30d158;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111113;
+        --text: #f5f5f7;
+        --muted: #a1a1a6;
+        --line: rgba(255, 255, 255, 0.12);
+        --panel: rgba(255, 255, 255, 0.07);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 50% -20%, rgba(48, 209, 88, 0.16), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1120px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 72px 0 56px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
+      gap: 48px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 7px rgba(48, 209, 88, 0.13);
+    }
+
+    h1 {
+      margin: 22px 0 16px;
+      font-size: clamp(44px, 7vw, 78px);
+      line-height: 0.96;
+      letter-spacing: 0;
+    }
+
+    .lede {
+      max-width: 620px;
+      color: var(--muted);
+      font-size: clamp(19px, 2.2vw, 24px);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 700;
+      border: 1px solid var(--line);
+      background: var(--text);
+      color: var(--bg);
+    }
+
+    .button.secondary {
+      background: var(--panel);
+      color: var(--text);
+      backdrop-filter: blur(18px);
+    }
+
+    .preview {
+      width: 100%;
+      border-radius: 28px;
+      border: 1px solid var(--line);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+      background: var(--panel);
+    }
+
+    .preview img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 56px;
+    }
+
+    .card {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    footer {
+      margin-top: 44px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    footer a {
+      color: inherit;
+      text-decoration-color: color-mix(in srgb, var(--muted) 42%, transparent);
+      text-underline-offset: 4px;
+    }
+
+    @media (max-width: 860px) {
+      .hero,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        padding-top: 44px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div>
+        <div class="eyebrow"><span class="dot"></span> macOS menu bar app for Codex automations</div>
+        <h1>Autopilot for Codex</h1>
+        <p class="lede">A calm native control surface for local Codex automation status, approvals, proposed changes, and workflow visibility.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/dot-RealityTest/autopilot-for-codex/releases/latest">Download DMG</a>
+          <a class="button secondary" href="https://github.com/dot-RealityTest/autopilot-for-codex">View on GitHub</a>
+        </div>
+      </div>
+      <div class="preview">
+        <img src="images/control-window.png" alt="Autopilot for Codex control window showing automation status and proposed changes">
+      </div>
+    </section>
+
+    <section class="grid" aria-label="Key features">
+      <article class="card">
+        <h2>Local automation status</h2>
+        <p>Reads local Codex automation files and shows what is active, waiting, paused, or blocked.</p>
+      </article>
+      <article class="card">
+        <h2>Human approval flow</h2>
+        <p>Surfaces proposed changes, permissions, and safety state before work continues.</p>
+      </article>
+      <article class="card">
+        <h2>Native macOS utility</h2>
+        <p>Swift, SwiftUI, AppKit, menu bar controls, notifications, keyboard shortcuts, and notarized distribution.</p>
+      </article>
+    </section>
+
+    <footer>
+      Local-first developer tool. Built for OpenAI Codex automation workflows on macOS.
+      <br>
+      <a href="overview.html">Overview</a> | <a href="llms.txt">llms.txt</a> | <a href="https://github.com/dot-RealityTest/autopilot-for-codex">GitHub</a>
+    </footer>
+  </main>
+</body>
+</html>
