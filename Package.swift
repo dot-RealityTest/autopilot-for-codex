@@ -3,14 +3,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "CodexAutomationMenu",
+    name: "AutopilotForCodex",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "CodexAutomationMenu", targets: ["CodexAutomationMenu"])
+        .executable(name: "AutopilotForCodex", targets: ["AutopilotForCodex"])
     ],
     targets: [
-        .executableTarget(name: "CodexAutomationMenu")
+        .executableTarget(name: "AutopilotForCodex")
     ]
 )

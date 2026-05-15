@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>CodexAutomationMenu</string>
+    <string>AutopilotForCodex</string>
     <key>CFBundleIdentifier</key>
-    <string>ai.v8v.CodexAutomationMenu</string>
+    <string>ai.v8v.AutopilotForCodex</string>
     <key>CFBundleName</key>
-    <string>Codex Automation Menu</string>
+    <string>Autopilot for Codex</string>
     <key>CFBundleDisplayName</key>
-    <string>Codex Automation Menu</string>
+    <string>Autopilot for Codex</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>

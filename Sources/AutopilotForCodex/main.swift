@@ -817,7 +817,7 @@ struct FastReportView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 7) {
-                    Text("Codex Automations")
+                    Text("Autopilot for Codex")
                         .font(.system(size: 13.5, weight: .semibold))
                         .lineLimit(1)
                     CodexConnectionBadge(connection: connection)
@@ -2040,7 +2040,7 @@ final class AppSettings: ObservableObject {
 
         let send: () -> Void = { [weak self] in
             let content = UNMutableNotificationContent()
-            content.title = "Codex Automations"
+            content.title = "Autopilot for Codex"
             content.body = "Notifications are working."
             content.sound = .default
 
@@ -2190,7 +2190,7 @@ struct SettingsWindowView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Codex Automations")
+                    Text("Autopilot for Codex")
                         .font(.system(size: 15, weight: .semibold))
                     Text("Background controls and shortcuts.")
                         .font(.system(size: 11))
@@ -2455,7 +2455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleProportionallyDown
-            button.toolTip = "Codex Automations"
+            button.toolTip = "Autopilot for Codex"
         }
 
         popover.behavior = .transient
@@ -2547,11 +2547,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
-        let appMenu = NSMenu(title: "Codex Automations")
+        let appMenu = NSMenu(title: "Autopilot for Codex")
         appMenuItem.submenu = appMenu
         addCommand("Settings...", key: ",", action: #selector(openSettingsFromMenu), to: appMenu)
         appMenu.addItem(.separator())
-        addCommand("Quit Codex Automations", key: "q", action: #selector(quitFromMenu), to: appMenu)
+        addCommand("Quit Autopilot for Codex", key: "q", action: #selector(quitFromMenu), to: appMenu)
 
         let automationMenuItem = NSMenuItem()
         mainMenu.addItem(automationMenuItem)
@@ -2608,11 +2608,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         button.image = makeStatusIcon(for: settings.backgroundStopped ? .paused : model.overallHealth)
         button.contentTintColor = .white
-        button.toolTip = settings.backgroundStopped ? "Codex Automations: stopped" : "Codex Automations: \(model.headline)"
+        button.toolTip = settings.backgroundStopped ? "Autopilot for Codex: stopped" : "Autopilot for Codex: \(model.headline)"
     }
 
     private func updateReportWindowTitle() {
-        reportWindow?.title = "Codex Automations · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
+        reportWindow?.title = "Autopilot for Codex · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
     }
 
     private func fastPopoverSize() -> NSSize {
@@ -2787,7 +2787,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.minSize = layoutMetrics.minSize
-        window.title = "Codex Automations · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
+        window.title = "Autopilot for Codex · \(model.activeCount) active · \(relativeUpdatedText(model.lastUpdated))"
         window.center()
         window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(
