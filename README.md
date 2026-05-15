@@ -12,6 +12,16 @@ Autopilot for Codex stays in the menu bar, watches local Codex automation files,
   <img src="Resources/AppIcon.png" alt="Autopilot for Codex icon" width="128">
 </p>
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/menu-popover.png" alt="Autopilot for Codex menu bar popover" width="520">
+</p>
+
+<p align="center">
+  <img src="docs/images/control-window.png" alt="Autopilot for Codex control window" width="900">
+</p>
+
 ## Download
 
 Download the latest notarized DMG from [GitHub Releases](https://github.com/dot-RealityTest/autopilot-for-codex/releases/latest).
